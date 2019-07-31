@@ -39,45 +39,76 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         implements ChannelHandlerContext, ResourceLeakHint {
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(AbstractChannelHandlerContext.class);
+    /**
+     * 下一个节点
+     */
     volatile AbstractChannelHandlerContext next;
+    /**
+     * 上一个节点
+     */
     volatile AbstractChannelHandlerContext prev;
 
+    /**
+     * {@link #handlerState} 的原子更新器
+     */
     private static final AtomicIntegerFieldUpdater<AbstractChannelHandlerContext> HANDLER_STATE_UPDATER =
             AtomicIntegerFieldUpdater.newUpdater(AbstractChannelHandlerContext.class, "handlerState");
 
     /**
      * {@link ChannelHandler#handlerAdded(ChannelHandlerContext)} is about to be called.
      */
-    private static final int ADD_PENDING = 1;
+    private static final int ADD_PENDING = 1; // 添加准备中
     /**
      * {@link ChannelHandler#handlerAdded(ChannelHandlerContext)} was called.
      */
-    private static final int ADD_COMPLETE = 2;
+    private static final int ADD_COMPLETE = 2; // 已添加
     /**
      * {@link ChannelHandler#handlerRemoved(ChannelHandlerContext)} was called.
      */
-    private static final int REMOVE_COMPLETE = 3;
+    private static final int REMOVE_COMPLETE = 3; // 已移除
     /**
      * Neither {@link ChannelHandler#handlerAdded(ChannelHandlerContext)}
      * nor {@link ChannelHandler#handlerRemoved(ChannelHandlerContext)} was called.
      */
-    private static final int INIT = 0;
-
+    private static final int INIT = 0;// 初始化
+    /**
+     * 是否为 inbound
+     */
     private final boolean inbound;
+    /**
+     * 是否为 outbound
+     */
     private final boolean outbound;
+    /**
+     * 所属 pipeline
+     */
     private final DefaultChannelPipeline pipeline;
+    /**
+     * 名字
+     */
     private final String name;
+    /**
+     * 是否使用有序的 EventExecutor ( {@link #executor} )，即 OrderedEventExecutor
+     */
     private final boolean ordered;
 
     // Will be set to null if no child executor should be used, otherwise it will be set to the
     // child executor.
+    /**
+     * EventExecutor 对象
+     */
     final EventExecutor executor;
+    /**
+     * 成功的 Promise 对象
+     */
     private ChannelFuture succeededFuture;
 
     // Lazily instantiated tasks used to trigger events to a handler with different executor.
     // There is no need to make this volatile as at worse it will just create a few more instances then needed.
     private Tasks invokeTasks;
-
+    /**
+     * 处理器状态
+     */
     private volatile int handlerState = INIT;
 
     AbstractChannelHandlerContext(DefaultChannelPipeline pipeline, EventExecutor executor, String name,
@@ -108,6 +139,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
 
     @Override
     public EventExecutor executor() {
+        // 如果未设置子执行器，则使用 Channel 的 EventLoop 作为执行器
         if (executor == null) {
             return channel().eventLoop();
         } else {
@@ -186,12 +218,17 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
 
     @Override
     public ChannelHandlerContext fireChannelActive() {
+        // 传播 Inbound 事件给下一个节点
+        // 获得下一个 Inbound 节点
+        // 调用下一个 Inbound 节点的 Channel active 方法
         invokeChannelActive(findContextInbound());
         return this;
     }
 
     static void invokeChannelActive(final AbstractChannelHandlerContext next) {
+        // 获得下一个 Inbound 节点的执行器
         EventExecutor executor = next.executor();
+        // 调用下一个 Inbound 节点的 Channel active 方法
         if (executor.inEventLoop()) {
             next.invokeChannelActive();
         } else {
@@ -205,13 +242,18 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
     }
 
     private void invokeChannelActive() {
+        // 判断是否是符合的 ChannelHandler
         if (invokeHandler()) {
             try {
+                // 调用该 ChannelHandler 的 Channel active 方法
+                // 如果节点的方法的实现不调用 fireChannelActive() 就不会传播 Inbound 事件给下一个节点
                 ((ChannelInboundHandler) handler()).channelActive(this);
             } catch (Throwable t) {
+                // 通知 Inbound 事件的传播，发生异常
                 notifyHandlerException(t);
             }
         } else {
+            // 跳过，传播 Inbound 事件给下一个节点
             fireChannelActive();
         }
     }
@@ -462,13 +504,16 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         if (localAddress == null) {
             throw new NullPointerException("localAddress");
         }
+        // 判断是否为合法的 Promise 对象
         if (isNotValidPromise(promise, false)) {
             // cancelled
             return promise;
         }
-
+        // 获得下一个 Outbound 节点
         final AbstractChannelHandlerContext next = findContextOutbound();
+        // 获得下一个 Outbound 节点的执行器
         EventExecutor executor = next.executor();
+        // 调用下一个 Outbound 节点的 bind 方法
         if (executor.inEventLoop()) {
             next.invokeBind(localAddress, promise);
         } else {
@@ -483,13 +528,18 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
     }
 
     private void invokeBind(SocketAddress localAddress, ChannelPromise promise) {
+        // 判断是否符合的 ChannelHandler
         if (invokeHandler()) {
             try {
+                // 调用该 ChannelHandler 的 bind 方法
+                // 如果handel的实现不调用 ctx.bind() 则就不会传播 Outbound 事件给下一个节点
                 ((ChannelOutboundHandler) handler()).bind(this, localAddress, promise);
             } catch (Throwable t) {
+                // 通知 Outbound 事件的传播，发生异常
                 notifyOutboundHandlerException(t, promise);
             }
         } else {
+            // 跳过，传播 Outbound 事件给下一个节点
             bind(localAddress, promise);
         }
     }
@@ -868,7 +918,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         if (promise == null) {
             throw new NullPointerException("promise");
         }
-
+        // Promise 已经完成
         if (promise.isDone()) {
             // Check if the promise was cancelled and if so signal that the processing of the operation
             // should not be performed.
@@ -879,21 +929,21 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
             }
             throw new IllegalArgumentException("promise already done: " + promise);
         }
-
+        // Channel 不符合
         if (promise.channel() != channel()) {
             throw new IllegalArgumentException(String.format(
                     "promise.channel does not match: %s (expected: %s)", promise.channel(), channel()));
         }
-
+        // DefaultChannelPromise 合法
         if (promise.getClass() == DefaultChannelPromise.class) {
             return false;
         }
-
+        // 禁止 VoidChannelPromise
         if (!allowVoidPromise && promise instanceof VoidChannelPromise) {
             throw new IllegalArgumentException(
                     StringUtil.simpleClassName(VoidChannelPromise.class) + " not allowed for this operation");
         }
-
+        // 禁止 CloseFuture
         if (promise instanceof AbstractChannel.CloseFuture) {
             throw new IllegalArgumentException(
                     StringUtil.simpleClassName(AbstractChannel.CloseFuture.class) + " not allowed in a pipeline");
@@ -902,6 +952,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
     }
 
     private AbstractChannelHandlerContext findContextInbound() {
+        // 循环，向后获得一个 Inbound 节点
         AbstractChannelHandlerContext ctx = this;
         do {
             ctx = ctx.next;
@@ -910,6 +961,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
     }
 
     private AbstractChannelHandlerContext findContextOutbound() {
+        // 循环，向前获得一个 Outbound 节点
         AbstractChannelHandlerContext ctx = this;
         do {
             ctx = ctx.prev;
@@ -922,10 +974,17 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         return channel().voidPromise();
     }
 
+    /**
+     * 设置 ChannelHandler 已移除
+     */
     final void setRemoved() {
         handlerState = REMOVE_COMPLETE;
     }
 
+    /**
+     * 设置 ChannelHandler 添加完成
+     * 循环 + CAS 保证多线程下的安全变更 handlerState 属性
+     */
     final boolean setAddComplete() {
         for (;;) {
             int oldState = handlerState;
@@ -941,6 +1000,9 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         }
     }
 
+    /**
+     * 设置 ChannelHandler 准备添加中
+     */
     final void setAddPending() {
         boolean updated = HANDLER_STATE_UPDATER.compareAndSet(this, INIT, ADD_PENDING);
         assert updated; // This should always be true as it MUST be called before setAddComplete() or setRemoved().
@@ -949,7 +1011,9 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
     final void callHandlerAdded() throws Exception {
         // We must call setAddComplete before calling handlerAdded. Otherwise if the handlerAdded method generates
         // any pipeline events ctx.handler() will miss them because the state will not allow it.
+        // 设置 AbstractChannelHandlerContext 已添加
         if (setAddComplete()) {
+            // 回调 ChannelHandler 添加完成( added )事件
             handler().handlerAdded(this);
         }
     }
@@ -957,11 +1021,13 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
     final void callHandlerRemoved() throws Exception {
         try {
             // Only call handlerRemoved(...) if we called handlerAdded(...) before.
+            // 如果handel状态为添加完成，回调handler移除完成事件
             if (handlerState == ADD_COMPLETE) {
                 handler().handlerRemoved(this);
             }
         } finally {
             // Mark the handler as removed in any case.
+            // 设置 ChannelHandler 已移除
             setRemoved();
         }
     }
@@ -976,6 +1042,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
      */
     private boolean invokeHandler() {
         // Store in local variable to reduce volatile reads.
+        // 对于 ordered = true 的节点，必须 ChannelHandler 已经添加完成
         int handlerState = this.handlerState;
         return handlerState == ADD_COMPLETE || (!ordered && handlerState == ADD_PENDING);
     }
@@ -997,12 +1064,15 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
 
     private static boolean safeExecute(EventExecutor executor, Runnable runnable, ChannelPromise promise, Object msg) {
         try {
+            // 提交 EventLoop 的线程中，进行执行任务
             executor.execute(runnable);
             return true;
         } catch (Throwable cause) {
             try {
+                // 发生异常，回调通知 promise 相关的异常
                 promise.setFailure(cause);
             } finally {
+                // 释放 msg 相关的资源z
                 if (msg != null) {
                     ReferenceCountUtil.release(msg);
                 }

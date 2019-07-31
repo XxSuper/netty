@@ -97,14 +97,21 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
     protected class NioByteUnsafe extends AbstractNioUnsafe {
 
         private void closeOnRead(ChannelPipeline pipeline) {
+            // 若isInputShutdown0()返回false，则说明是远端连接已经关闭了（javaChannel().socket().isInputShutdown() || !isActive()）
             if (!isInputShutdown0()) {
+                // 一个连接远端关闭时本地端是否关闭，默认值为False。值为False时，连接自动关闭；
+                // 为True时，触发ChannelInboundHandler的userEventTriggered()方法，事件为ChannelInputShutdownEvent。
                 if (isAllowHalfClosure(config())) {
+                    // 在客户端或者服务端通过socket.shutdownOutput()都是单向关闭的，即关闭客户端的输出流并不会关闭服务端的输出流，所以是一种单方向的关闭流；
+                    // 通过socket.shutdownOutput()关闭输出流，但socket仍然是连接状态，连接并未关闭
+                    // 如果直接关闭输入或者输出流，即：in.close()或者out.close()，会直接关闭socket
                     shutdownInput();
                     pipeline.fireUserEventTriggered(ChannelInputShutdownEvent.INSTANCE);
                 } else {
                     close(voidPromise());
                 }
             } else {
+                // 已经没有数据可读取，触发通道输入关闭事件
                 inputClosedSeenErrorOnRead = true;
                 pipeline.fireUserEventTriggered(ChannelInputShutdownReadComplete.INSTANCE);
             }

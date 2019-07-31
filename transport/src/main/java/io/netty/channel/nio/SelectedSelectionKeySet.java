@@ -35,9 +35,10 @@ final class SelectedSelectionKeySet extends AbstractSet<SelectionKey> {
         if (o == null) {
             return false;
         }
-
+        // 将SelectionKey塞到该数组的逻辑尾部，更新该数组的逻辑长度 + 1
         keys[size++] = o;
         if (size == keys.length) {
+            // 如果该数组的逻辑长度等于数组的物理长度，就将该数组扩容
             increaseCapacity();
         }
 

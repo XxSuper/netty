@@ -53,6 +53,9 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
 
     PriorityQueue<ScheduledFutureTask<?>> scheduledTaskQueue() {
         if (scheduledTaskQueue == null) {
+            // 优先级队列-优先级队列按一定的顺序来排列内部元素，内部元素必须是可以比较的，
+            // 这里每个元素都是定时任务，那就说明定时任务是可以比较的
+            // 每个任务都有一个下一次执行的截止时间，截止时间是可以比较的，截止时间相同的情况下，任务添加的顺序也是可以比较的
             scheduledTaskQueue = new DefaultPriorityQueue<ScheduledFutureTask<?>>(
                     SCHEDULED_FUTURE_TASK_COMPARATOR,
                     // Use same initial capacity as java.util.PriorityQueue
@@ -106,7 +109,7 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
         if (scheduledTask == null) {
             return null;
         }
-
+        // 当前任务的截止时间已经到了，则取出来
         if (scheduledTask.deadlineNanos() <= nanoTime) {
             scheduledTaskQueue.remove();
             return scheduledTask;

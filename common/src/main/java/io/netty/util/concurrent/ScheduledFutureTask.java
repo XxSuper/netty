@@ -102,7 +102,7 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
         if (this == o) {
             return 0;
         }
-
+        // 先比较任务的截止时间，截止时间相同的情况下，再比较id，即任务添加的顺序，如果id再相同的话，就抛Error
         ScheduledFutureTask<?> that = (ScheduledFutureTask<?>) o;
         long d = deadlineNanos() - that.deadlineNanos();
         if (d < 0) {
@@ -122,6 +122,7 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
     public void run() {
         assert executor().inEventLoop();
         try {
+            // periodNanos == 0 若干时间后执行一次，执行完了该任务就结束
             if (periodNanos == 0) {
                 if (setUncancellableInternal()) {
                     V result = task.call();
@@ -134,8 +135,11 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
                     if (!executor().isShutdown()) {
                         long p = periodNanos;
                         if (p > 0) {
+                            // periodNanos大于0，表示是以固定频率执行某个任务
+                            // 设置该任务的下一次截止时间为本次的截止时间加上间隔时间periodNanos
                             deadlineNanos += p;
                         } else {
+                            // periodNanos小于0，表示每次任务执行完毕之后，间隔多长时间之后再次执行，截止时间为当前时间加上间隔时间
                             deadlineNanos = nanoTime() - p;
                         }
                         if (!isCancelled()) {
@@ -143,6 +147,7 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
                             Queue<ScheduledFutureTask<?>> scheduledTaskQueue =
                                     ((AbstractScheduledEventExecutor) executor()).scheduledTaskQueue;
                             assert scheduledTaskQueue != null;
+                            // 将当前任务对象再次加入到队列
                             scheduledTaskQueue.add(this);
                         }
                     }

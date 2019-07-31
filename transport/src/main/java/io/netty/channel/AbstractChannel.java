@@ -469,18 +469,20 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 promise.setFailure(new IllegalStateException("registered to an event loop already"));
                 return;
             }
+            // 校验eventLoop的类型
             if (!isCompatible(eventLoop)) {
                 promise.setFailure(
                         new IllegalStateException("incompatible event loop type: " + eventLoop.getClass().getName()));
                 return;
             }
-
+            // 给channel分配一个eventLoop
             AbstractChannel.this.eventLoop = eventLoop;
-
+            // 当前线程是eventLoop的线程执行注册
             if (eventLoop.inEventLoop()) {
                 register0(promise);
             } else {
                 try {
+                    // 当前线程不是eventLoop的线程 - 用户自定义的普通任务
                     eventLoop.execute(new Runnable() {
                         @Override
                         public void run() {
@@ -539,6 +541,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
         @Override
         public final void bind(final SocketAddress localAddress, final ChannelPromise promise) {
+            // 判断是否在 EventLoop 的线程中。
             assertEventLoop();
 
             if (!promise.setUncancellable() || !ensureOpen(promise)) {
@@ -557,7 +560,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                         "is not bound to a wildcard address; binding to a non-wildcard " +
                         "address (" + localAddress + ") anyway as requested.");
             }
-
+            // 记录 Channel 是否激活
             boolean wasActive = isActive();
             try {
                 doBind(localAddress);
@@ -566,7 +569,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 closeIfClosed();
                 return;
             }
-
+            // 若 Channel 是新激活的，触发通知 Channel 已激活的事件。
             if (!wasActive && isActive()) {
                 invokeLater(new Runnable() {
                     @Override
@@ -575,7 +578,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                     }
                 });
             }
-
+            // 回调通知 promise 执行成功
             safeSetSuccess(promise);
         }
 

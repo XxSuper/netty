@@ -162,6 +162,7 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         this.addTaskWakesUp = addTaskWakesUp;
         this.maxPendingTasks = Math.max(16, maxPendingTasks);
         this.executor = ObjectUtil.checkNotNull(executor, "executor");
+        // 创建任务队列
         taskQueue = newTaskQueue(this.maxPendingTasks);
         rejectedExecutionHandler = ObjectUtil.checkNotNull(rejectedHandler, "rejectedHandler");
     }
@@ -181,6 +182,10 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
      * implementation that does not support blocking operations at all.
      */
     protected Queue<Runnable> newTaskQueue(int maxPendingTasks) {
+        // LinkedBlockingQueue是一个阻塞的线程安全的队列，底层采用链表实现
+        // 1、add方法在添加元素的时候，若超出了队列的长度会直接抛出异常
+        // 2、put方法，若向队尾添加元素的时候发现队列已经满了会发生阻塞一直等待空间，以加入元素
+        // 3、offer方法在添加元素时，如果发现队列已满无法添加的话，会直接返回false
         return new LinkedBlockingQueue<Runnable>(maxPendingTasks);
     }
 
@@ -271,11 +276,15 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     }
 
     private boolean fetchFromScheduledTaskQueue() {
+        // 获取当前时间到开始时间的时间间隔
         long nanoTime = AbstractScheduledEventExecutor.nanoTime();
+        // 获取到期的定时任务
         Runnable scheduledTask  = pollScheduledTask(nanoTime);
         while (scheduledTask != null) {
+            // 将从定时任务队列中取出的到期的定时任务添加到mpsc queue-普通任务队列里面
             if (!taskQueue.offer(scheduledTask)) {
                 // No space left in the task queue add it back to the scheduledTaskQueue so we pick it up again.
+                // 添加失败重新放入定时任务队列
                 scheduledTaskQueue().add((ScheduledFutureTask<?>) scheduledTask);
                 return false;
             }
@@ -390,23 +399,30 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
      * the tasks in the task queue and returns if it ran longer than {@code timeoutNanos}.
      */
     protected boolean runAllTasks(long timeoutNanos) {
+        // 将到期的定时任务转移到mpsc queue里面
         fetchFromScheduledTaskQueue();
+        // 从taskQueue中获取任务
         Runnable task = pollTask();
         if (task == null) {
+            // NioEventLoop 可以通过父类 SingleTheadEventLoop 的 executeAfterEventLoopIteration 方法向 tailTasks 中添加收尾任务
             afterRunningAllTasks();
             return false;
         }
-
+        // 用reactor线程传入的超时时间 timeoutNanos 来计算出当前任务循环的deadline（截止时间）
         final long deadline = ScheduledFutureTask.nanoTime() + timeoutNanos;
         long runTasks = 0;
         long lastExecutionTime;
+        // 循环执行任务
         for (;;) {
+            // 安全的执行任务
             safeExecute(task);
-
+            // 已执行任务的个数
             runTasks ++;
 
             // Check timeout every 64 tasks because nanoTime() is relatively expensive.
             // XXX: Hard-coded value - will make it configurable if it is really a problem.
+            // 每执行完64个任务之后，判断当前时间是否超过本次reactor任务循环的截止时间了，如果超过，那就break掉，如果没有超过，那就继续执行。
+            // netty对性能的优化考虑地相当的周到，假设netty任务队列里面如果有海量小任务，如果每次都要执行完任务都要判断一下是否到截止时间，那么效率是比较低下的
             if ((runTasks & 0x3F) == 0) {
                 lastExecutionTime = ScheduledFutureTask.nanoTime();
                 if (lastExecutionTime >= deadline) {
@@ -420,7 +436,7 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
                 break;
             }
         }
-
+        // NioEventLoop 可以通过父类 SingleTheadEventLoop 的 executeAfterEventLoopIteration 方法向 tailTasks 中添加收尾任务
         afterRunningAllTasks();
         this.lastExecutionTime = lastExecutionTime;
         return true;
@@ -433,6 +449,7 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     protected void afterRunningAllTasks() { }
     /**
      * Returns the amount of time left until the scheduled task with the closest dead line is executed.
+     * 计算延迟任务队列中第一个任务的到期执行时间（即最晚还能延迟多长时间执行），默认返回1s
      */
     protected long delayNanos(long currentTimeNanos) {
         ScheduledFutureTask<?> scheduledTask = peekScheduledTask();
@@ -751,8 +768,9 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         if (task == null) {
             throw new NullPointerException("task");
         }
-
+        // 首先判断该 EventLoop 的线程是否是当前线程
         boolean inEventLoop = inEventLoop();
+        // 向任务队列里面添加任务
         addTask(task);
         if (!inEventLoop) {
             startThread();
@@ -772,7 +790,8 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
                 }
             }
         }
-
+        // addTaskWakesUp:调用addTask(Runnable)添加任务时是否能唤醒线程
+        // 由于DefaultEventExecutor是通过BlockingQueue的阻塞来实现唤醒的，所以addTaskWakesUp=true
         if (!addTaskWakesUp && wakesUpForTask(task)) {
             wakeup(inEventLoop);
         }
@@ -891,15 +910,18 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
 
     private void doStartThread() {
         assert thread == null;
+        // executor 默认是ThreadPerTaskExecutor和DefaultThreadFactory，线程实体是FastThreadLocalThread，创建EventLoopGroup时确定的
         executor.execute(new Runnable() {
             @Override
             public void run() {
+                // 执行以后将当前线程赋值给EventLoop
                 thread = Thread.currentThread();
                 if (interrupted) {
                     thread.interrupt();
                 }
 
                 boolean success = false;
+                // 更新内部时间戳，该时间戳指示最近执行提交的任务的时间。
                 updateLastExecutionTime();
                 try {
                     SingleThreadEventExecutor.this.run();

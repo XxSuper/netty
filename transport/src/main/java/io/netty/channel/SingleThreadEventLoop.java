@@ -100,6 +100,7 @@ public abstract class SingleThreadEventLoop extends SingleThreadEventExecutor im
      *
      * @param task to be added.
      */
+    // 向tailTasks中添加收尾任务
     @UnstableApi
     public final void executeAfterEventLoopIteration(Runnable task) {
         ObjectUtil.checkNotNull(task, "task");
@@ -110,7 +111,7 @@ public abstract class SingleThreadEventLoop extends SingleThreadEventExecutor im
         if (!tailTasks.offer(task)) {
             reject(task);
         }
-
+        // 唤醒selector的阻塞select
         if (wakesUpForTask(task)) {
             wakeup(inEventLoop());
         }

@@ -50,13 +50,26 @@ public class Bootstrap extends AbstractBootstrap<Bootstrap, Channel> {
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(Bootstrap.class);
 
+    /**
+     * 默认地址解析器对象
+     */
     private static final AddressResolverGroup<?> DEFAULT_RESOLVER = DefaultAddressResolverGroup.INSTANCE;
 
+    /**
+     * 启动类配置对象
+     */
     private final BootstrapConfig config = new BootstrapConfig(this);
 
+    /**
+     * 地址解析器对象
+     */
     @SuppressWarnings("unchecked")
     private volatile AddressResolverGroup<SocketAddress> resolver =
             (AddressResolverGroup<SocketAddress>) DEFAULT_RESOLVER;
+
+    /**
+     * 连接地址
+     */
     private volatile SocketAddress remoteAddress;
 
     public Bootstrap() { }
@@ -160,13 +173,16 @@ public class Bootstrap extends AbstractBootstrap<Bootstrap, Channel> {
      * @see #connect()
      */
     private ChannelFuture doResolveAndConnect(final SocketAddress remoteAddress, final SocketAddress localAddress) {
+        // 初始化并注册一个 Channel 对象，因为注册是异步的过程，所以返回一个 ChannelFuture 对象。
         final ChannelFuture regFuture = initAndRegister();
         final Channel channel = regFuture.channel();
 
         if (regFuture.isDone()) {
+            // 若执行失败，直接进行返回
             if (!regFuture.isSuccess()) {
                 return regFuture;
             }
+            // 解析远程地址，并进行连接
             return doResolveAndConnect0(channel, remoteAddress, localAddress, channel.newPromise());
         } else {
             // Registration future is almost always fulfilled already, but just in case it's not.
@@ -262,13 +278,15 @@ public class Bootstrap extends AbstractBootstrap<Bootstrap, Channel> {
     @SuppressWarnings("unchecked")
     void init(Channel channel) throws Exception {
         ChannelPipeline p = channel.pipeline();
+        // 添加处理器到 pipeline 中
         p.addLast(config.handler());
 
+        // 初始化 Channel 的可选项集合
         final Map<ChannelOption<?>, Object> options = options0();
         synchronized (options) {
             setChannelOptions(channel, options, logger);
         }
-
+        // 初始化 Channel 的属性集合
         final Map<AttributeKey<?>, Object> attrs = attrs0();
         synchronized (attrs) {
             for (Entry<AttributeKey<?>, Object> e: attrs.entrySet()) {

@@ -105,6 +105,7 @@ public class DefaultThreadFactory implements ThreadFactory {
 
     @Override
     public Thread newThread(Runnable r) {
+        // reactor线程实体
         Thread t = newThread(FastThreadLocalRunnable.wrap(r), prefix + nextId.incrementAndGet());
         try {
             if (t.isDaemon() != daemon) {
