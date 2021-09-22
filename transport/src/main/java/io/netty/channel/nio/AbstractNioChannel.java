@@ -19,14 +19,8 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.AbstractChannel;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelException;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelPromise;
-import io.netty.channel.ConnectTimeoutException;
-import io.netty.channel.EventLoop;
+import io.netty.channel.*;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.ReferenceCounted;
 import io.netty.util.internal.ThrowableUtil;
@@ -35,11 +29,7 @@ import io.netty.util.internal.logging.InternalLoggerFactory;
 
 import java.io.IOException;
 import java.net.SocketAddress;
-import java.nio.channels.CancelledKeyException;
-import java.nio.channels.ClosedChannelException;
-import java.nio.channels.ConnectionPendingException;
-import java.nio.channels.SelectableChannel;
-import java.nio.channels.SelectionKey;
+import java.nio.channels.*;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -68,9 +58,19 @@ public abstract class AbstractNioChannel extends AbstractChannel {
     /**
      * The future of the current connection attempt.  If not null, subsequent
      * connection attempts will fail.
+     *
+     * 目前正在连接远程地址的 ChannelPromise 对象。
      */
     private ChannelPromise connectPromise;
+
+    /**
+     * 连接超时监听 ScheduledFuture 对象。
+     */
     private ScheduledFuture<?> connectTimeoutFuture;
+
+    /**
+     * 正在连接的远程地址
+     */
     private SocketAddress requestedRemoteAddress;
 
     /**
@@ -82,12 +82,16 @@ public abstract class AbstractNioChannel extends AbstractChannel {
      */
     protected AbstractNioChannel(Channel parent, SelectableChannel ch, int readInterestOp) {
         super(parent);
+        // Netty NIO Channel 对象，持有的 Java 原生 NIO 的 Channel 对象
         this.ch = ch;
+        // 感兴趣事件的操作位值
         this.readInterestOp = readInterestOp;
         try {
+            // 设置 NIO Channel 为非阻塞。
             ch.configureBlocking(false);
         } catch (IOException e) {
             try {
+                // 若发生异常，关闭 NIO Channel，并抛出异常
                 ch.close();
             } catch (IOException e2) {
                 if (logger.isWarnEnabled()) {
@@ -237,35 +241,43 @@ public abstract class AbstractNioChannel extends AbstractChannel {
             return javaChannel();
         }
 
+        /**
+         * 执行 Channel 连接远程地址的逻辑
+         *
+         * @param remoteAddress
+         * @param localAddress
+         * @param promise
+         */
         @Override
         public final void connect(
                 final SocketAddress remoteAddress, final SocketAddress localAddress, final ChannelPromise promise) {
+            // 确保 java 原生的 channel 是打开的
             if (!promise.setUncancellable() || !ensureOpen(promise)) {
                 return;
             }
 
             try {
-                // 目前有正在连接远程地址的 ChannelPromise ，则直接抛出异常，禁止同时发起多个连接。
+                // 目前有正在连接远程地址的 ChannelPromise，则直接抛出异常，禁止同时发起多个连接。
                 if (connectPromise != null) {
                     // Already a connect in process.
                     throw new ConnectionPendingException();
                 }
-                // 记录 Channel 是否激活
+                // 记录 Channel 是否激活，判断 SocketChannel 是否处于打开，并且连接的状态
                 boolean wasActive = isActive();
 
                 // 执行连接远程地址
                 if (doConnect(remoteAddress, localAddress)) {
                     fulfillConnectPromise(promise, wasActive);
                 } else {
-                    // 记录 connectPromise
+                    // 记录 connectPromise，connectPromise 变量，在 AbstractNioChannel 类中定义
                     connectPromise = promise;
-                    // 记录 requestedRemoteAddress
+                    // 记录 requestedRemoteAddress，requestedRemoteAddress 变量，在 AbstractNioChannel 类中定义
                     requestedRemoteAddress = remoteAddress;
 
                     // Schedule connect timeout.
-                    // 使用 EventLoop 发起定时任务，监听连接远程地址超时。若连接超时，则回调通知 connectPromise 超时异常。
                     int connectTimeoutMillis = config().getConnectTimeoutMillis();
                     if (connectTimeoutMillis > 0) {
+                        // 调用 EventLoop#schedule(Runnable command, long delay, TimeUnit unit) 方法，发起定时任务 connectTimeoutFuture，监听连接远程地址超时。若连接超时，则回调通知 connectPromise 超时异常。
                         connectTimeoutFuture = eventLoop().schedule(new Runnable() {
                             @Override
                             public void run() {
@@ -273,12 +285,13 @@ public abstract class AbstractNioChannel extends AbstractChannel {
                                 ConnectTimeoutException cause =
                                         new ConnectTimeoutException("connection timed out: " + remoteAddress);
                                 if (connectPromise != null && connectPromise.tryFailure(cause)) {
+                                    // 关闭 channel
                                     close(voidPromise());
                                 }
                             }
                         }, connectTimeoutMillis, TimeUnit.MILLISECONDS);
                     }
-                    // 添加监听器，监听连接远程地址取消。
+                    // 调用 ChannelPromise#addListener(ChannelFutureListener) 方法，添加监听器，监听连接远程地址是否取消。若取消，则取消 connectTimeoutFuture 超时任务，并置空 connectPromise，这样客户端 Channel 可以发起下一次连接。
                     promise.addListener(new ChannelFutureListener() {
                         @Override
                         public void operationComplete(ChannelFuture future) throws Exception {
@@ -289,17 +302,25 @@ public abstract class AbstractNioChannel extends AbstractChannel {
                                 }
                                 // 置空 connectPromise
                                 connectPromise = null;
+                                // 关闭 channel
                                 close(voidPromise());
                             }
                         }
                     });
                 }
             } catch (Throwable t) {
+                // 回调通知 promise 发生异常
                 promise.tryFailure(annotateConnectException(t, remoteAddress));
                 closeIfClosed();
             }
         }
 
+        /**
+         * 通知 connectPromise 连接完成
+         *
+         * @param promise
+         * @param wasActive
+         */
         private void fulfillConnectPromise(ChannelPromise promise, boolean wasActive) {
             if (promise == null) {
                 // Closed via cancellation and the promise has been notified already.
@@ -312,17 +333,19 @@ public abstract class AbstractNioChannel extends AbstractChannel {
             boolean active = isActive();
 
             // trySuccess() will return false if a user cancelled the connection attempt.
-            // 回调通知 promise 执行成功
+            // 回调通知 promise 执行成功，此处的通知，对应回调的是我们添加到 #connect(...) 方法返回的 ChannelFuture 的 ChannelFutureListener 的监听器
             boolean promiseSet = promise.trySuccess();
 
             // Regardless if the connection attempt was cancelled, channelActive() event should be triggered,
             // because what happened is what happened.
-            // 若 Channel 是新激活的，触发通知 Channel 已激活的事件。
+            // 若 Channel 是新激活的，触发通知 Channel 已激活的事件。后续的流程，和 NioServerSocketChannel 一样，
+            // 也就说，会调用到 AbstractUnsafe#beginRead() 方法。这意味着什么呢？将我们创建 NioSocketChannel 时，设置的 readInterestOp = SelectionKey.OP_READ 添加为感兴趣的事件。也就说，客户端可以读取服务端发送来的数据。
             if (!wasActive && active) {
                 pipeline().fireChannelActive();
             }
 
             // If a user cancelled the connection attempt, close the channel, which is followed by channelInactive().
+            // 如果用户取消了连接尝试，则关闭通道，然后触发 channelInactive()
             if (!promiseSet) {
                 close(voidPromise());
             }
@@ -335,10 +358,15 @@ public abstract class AbstractNioChannel extends AbstractChannel {
             }
 
             // Use tryFailure() instead of setFailure() to avoid the race against cancel().
+            // 回调通知 promise 发生异常
             promise.tryFailure(cause);
+            // 如果原生 channel 关闭，则关闭 netty channel
             closeIfClosed();
         }
 
+        /**
+         * 完成客户端的连接
+         */
         @Override
         public final void finishConnect() {
             // Note this method is invoked by the event loop only if the connection attempt was
@@ -347,19 +375,19 @@ public abstract class AbstractNioChannel extends AbstractChannel {
             assert eventLoop().inEventLoop();
 
             try {
-                // 获得 Channel 是否激活
+                // 获得 Channel 是否激活，调试时，此时返回 false，因为连接还没完成
                 boolean wasActive = isActive();
-                // 执行完成连接
+                // 执行完成连接的逻辑
                 doFinishConnect();
-                // 通知 connectPromise 连接完成
+                // 执行完成连接成功，通知 connectPromise 连接完成
                 fulfillConnectPromise(connectPromise, wasActive);
             } catch (Throwable t) {
-                // 通知 connectPromise 连接异常
+                // 执行完成连接异常，通知 connectPromise 连接异常
                 fulfillConnectPromise(connectPromise, annotateConnectException(t, requestedRemoteAddress));
             } finally {
                 // Check for null as the connectTimeoutFuture is only created if a connectTimeoutMillis > 0 is used
                 // See https://github.com/netty/netty/issues/1770
-                // 取消 connectTimeoutFuture 任务
+                // 执行完成连接结束，取消 connectTimeoutFuture 超时任务
                 if (connectTimeoutFuture != null) {
                     connectTimeoutFuture.cancel(false);
                 }
@@ -400,7 +428,10 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         boolean selected = false;
         for (;;) {
             try {
-                // 将nio channel绑定到eventLoop的unwrappedSelector上，并添加附件为netty channel
+                // 将 nio channel 绑定到 eventLoop 的 unwrappedSelector 上，并添加附件为 netty channel
+                // 每个 NioEventLoop 对象上，都独有一个 Selector 对象，注册 Java 原生 NIO 的 Channel 对象到 Selector 对象上
+                // 注册方式是多态的，它既可以被 NIOServerSocketChannel 用来监听客户端的连接接入，也可以注册 SocketChannel 用来监听网络读或者写操作。
+                // 通过 SelectionKey#interestOps(int ops) 方法可以方便地修改监听操作位。所以，此处注册需要获取 SelectionKey 并给 AbstractNIOChannel 的成员变量 selectionKey 赋值。
                 selectionKey = javaChannel().register(eventLoop().unwrappedSelector(), 0, this);
                 return;
             } catch (CancelledKeyException e) {
@@ -435,6 +466,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
 
         final int interestOps = selectionKey.interestOps();
         if ((interestOps & readInterestOp) == 0) {
+            // 将我们创建 NioServerSocketChannel 时，设置的 readInterestOp = SelectionKey.OP_ACCEPT 添加为感兴趣的事件，也就说，服务端可以开始处理客户端的连接事件
             selectionKey.interestOps(interestOps | readInterestOp);
         }
     }

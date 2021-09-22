@@ -16,16 +16,7 @@
 package io.netty.channel.socket.nio;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelException;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelOption;
-import io.netty.channel.ChannelOutboundBuffer;
-import io.netty.channel.ChannelPromise;
-import io.netty.channel.EventLoop;
-import io.netty.channel.FileRegion;
-import io.netty.channel.RecvByteBufAllocator;
+import io.netty.channel.*;
 import io.netty.channel.nio.AbstractNioByteChannel;
 import io.netty.channel.socket.DefaultSocketChannelConfig;
 import io.netty.channel.socket.ServerSocketChannel;
@@ -55,8 +46,18 @@ import static io.netty.channel.internal.ChannelUtils.MAX_BYTES_PER_GATHERING_WRI
  */
 public class NioSocketChannel extends AbstractNioByteChannel implements io.netty.channel.socket.SocketChannel {
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(NioSocketChannel.class);
+
+    /**
+     * 静态属性，默认的 SelectorProvider 实现类
+     */
     private static final SelectorProvider DEFAULT_SELECTOR_PROVIDER = SelectorProvider.provider();
 
+    /**
+     * 在构造方法中，调用 #newSocket(SelectorProvider provider) 方法，创建 NIO 的 SocketChannel 对象。
+     *
+     * @param provider
+     * @return
+     */
     private static SocketChannel newSocket(SelectorProvider provider) {
         try {
             /**
@@ -71,6 +72,9 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
         }
     }
 
+    /**
+     * config 属性，Channel 对应的配置对象。每种 Channel 实现类，也会对应一个 ChannelConfig 实现类。例如，NioSocketChannel 类，对应 SocketChannelConfig 配置类。
+     */
     private final SocketChannelConfig config;
 
     /**
@@ -101,7 +105,9 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
      * @param socket    the {@link SocketChannel} which will be used
      */
     public NioSocketChannel(Channel parent, SocketChannel socket) {
+        // 调用父 AbstractNioByteChannel 的构造方法
         super(parent, socket);
+        // 初始化 config 属性，创建 NioSocketChannelConfig 对象
         config = new NioSocketChannelConfig(this, socket.socket());
     }
 
@@ -304,16 +310,18 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
 
     @Override
     protected boolean doConnect(SocketAddress remoteAddress, SocketAddress localAddress) throws Exception {
-        // 绑定本地地址
+        // 若 localAddress 非空
         if (localAddress != null) {
+            // 绑定本地地址，一般情况下，NIO Client 是不需要绑定本地地址的。默认情况下，系统会随机分配一个可用的本地地址，进行绑定。
             doBind0(localAddress);
         }
 
-        boolean success = false;// 执行是否成功
+        // 执行是否成功
+        boolean success = false;
         try {
-            // 连接远程地址
+            // Java 原生 NIO SocketChannel 连接远程地址，并返回是否连接完成(成功)
             boolean connected = SocketUtils.connect(javaChannel(), remoteAddress);
-            // 若未连接完成，则关注连接( OP_CONNECT )事件。
+            // 若未连接完成，则关注连接( OP_CONNECT )事件。也就是说，当连接远程地址成功时，Channel 对应的 Selector 将会轮询到该事件，可以进一步处理。
             if (!connected) {
                 selectionKey().interestOps(SelectionKey.OP_CONNECT);
             }
@@ -331,6 +339,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
 
     @Override
     protected void doFinishConnect() throws Exception {
+        // 调用 SocketChannel#finishConnect() 方法，完成连接
         if (!javaChannel().finishConnect()) {
             throw new Error();
         }

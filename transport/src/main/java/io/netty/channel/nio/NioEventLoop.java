@@ -711,6 +711,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
                 ops &= ~SelectionKey.OP_CONNECT;
                 k.interestOps(ops); // 连接完成后客户端除了连接事件都感兴趣
 
+                // AbstractNioUnsafe#finishConnect() 通过 Selector 轮询到 SelectionKey.OP_CONNECT 事件时，进行触发
                 unsafe.finishConnect(); // 完成连接
             }
 

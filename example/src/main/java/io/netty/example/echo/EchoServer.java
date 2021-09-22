@@ -45,15 +45,24 @@ public final class EchoServer {
         }
 
         // Configure the server.
+        // boss 线程组：用于服务端接受客户端的连接
         EventLoopGroup bossGroup = new NioEventLoopGroup(1);
+        // worker 线程组：用于进行客户端的 SocketChannel 的数据读写
         EventLoopGroup workerGroup = new NioEventLoopGroup();
+        // 创建 io.netty.example.echo.EchoServerHandler 处理器对象
         final EchoServerHandler serverHandler = new EchoServerHandler();
         try {
+            // 创建 ServerBootstrap 对象，用于设置服务端的启动配置
             ServerBootstrap b = new ServerBootstrap();
+            // 设置使用的 EventLoopGroup
             b.group(bossGroup, workerGroup)
+             // 设置要被实例化的 Channel 为 NioServerSocketChannel 类
              .channel(NioServerSocketChannel.class)
+             // 设置 NioServerSocketChannel 的可选项。在 io.netty.channel.ChannelOption 类中，枚举了相关的可选项
              .option(ChannelOption.SO_BACKLOG, 100)
+             // 设置 NioServerSocketChannel 的处理器，使用了 io.netty.handler.logging.LoggingHandler 类，用于打印服务端的每个事件
              .handler(new LoggingHandler(LogLevel.INFO))
+             // 设置连入服务端的 Client 的 SocketChannel 的处理器，使用 ChannelInitializer 来初始化连入服务端的 Client 的 SocketChannel 的处理器。
              .childHandler(new ChannelInitializer<SocketChannel>() {
                  @Override
                  public void initChannel(SocketChannel ch) throws Exception {
@@ -67,6 +76,7 @@ public final class EchoServer {
              });
 
             // Start the server.
+            // 先调用 #bind(int port) 方法，绑定端口，后调用 ChannelFuture#sync() 方法，阻塞等待成功。
             ChannelFuture f = b.bind(PORT).addListener(new ChannelFutureListener() { // <1> 监听器就是我！
                 @Override
                 public void operationComplete(ChannelFuture future) throws Exception {
@@ -75,9 +85,11 @@ public final class EchoServer {
             }).sync();
 
             // Wait until the server socket is closed.
+            // 先调用 #closeFuture() 方法，监听服务器关闭，后调用 ChannelFuture#sync() 方法，阻塞等待成功。此处不是关闭服务器，而是“监听”关闭
             f.channel().closeFuture().sync();
         } finally {
             // Shut down all event loops to terminate all threads.
+            // 执行到此处，说明服务端已经关闭
             bossGroup.shutdownGracefully();
             workerGroup.shutdownGracefully();
         }
