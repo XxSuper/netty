@@ -23,13 +23,23 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import static io.netty.util.concurrent.AbstractEventExecutor.*;
+import static io.netty.util.concurrent.AbstractEventExecutor.DEFAULT_SHUTDOWN_QUIET_PERIOD;
+import static io.netty.util.concurrent.AbstractEventExecutor.DEFAULT_SHUTDOWN_TIMEOUT;
 
 
 /**
  * Abstract base class for {@link EventExecutorGroup} implementations.
+ *
+ * 实现 EventExecutorGroup 接口，EventExecutor (事件执行器) 的分组抽象类
  */
 public abstract class AbstractEventExecutorGroup implements EventExecutorGroup {
+
+    /**
+     * 提交一个普通任务到 EventExecutor 中，提交的 EventExecutor，通过 #next() 方法选择
+     *
+     * @param task
+     * @return
+     */
     @Override
     public Future<?> submit(Runnable task) {
         return next().submit(task);
@@ -45,6 +55,14 @@ public abstract class AbstractEventExecutorGroup implements EventExecutorGroup {
         return next().submit(task);
     }
 
+    /**
+     * 提交一个定时任务到 EventExecutor 中，提交的 EventExecutor ，通过 #next() 方法选择
+     *
+     * @param command
+     * @param delay
+     * @param unit
+     * @return
+     */
     @Override
     public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
         return next().schedule(command, delay, unit);
@@ -65,6 +83,11 @@ public abstract class AbstractEventExecutorGroup implements EventExecutorGroup {
         return next().scheduleWithFixedDelay(command, initialDelay, delay, unit);
     }
 
+    /**
+     * 关闭 EventExecutorGroup
+     *
+     * @return
+     */
     @Override
     public Future<?> shutdownGracefully() {
         return shutdownGracefully(DEFAULT_SHUTDOWN_QUIET_PERIOD, DEFAULT_SHUTDOWN_TIMEOUT, TimeUnit.SECONDS);
@@ -87,6 +110,14 @@ public abstract class AbstractEventExecutorGroup implements EventExecutorGroup {
         return Collections.emptyList();
     }
 
+    /**
+     * 在 EventExecutor 中执行多个普通任务，执行的 EventExecutor，通过 #next() 方法选择。并且，多个任务使用同一个 EventExecutor
+     *
+     * @param tasks
+     * @param <T>
+     * @return
+     * @throws InterruptedException
+     */
     @Override
     public <T> List<java.util.concurrent.Future<T>> invokeAll(Collection<? extends Callable<T>> tasks)
             throws InterruptedException {
@@ -99,6 +130,15 @@ public abstract class AbstractEventExecutorGroup implements EventExecutorGroup {
         return next().invokeAll(tasks, timeout, unit);
     }
 
+    /**
+     * 在 EventExecutor 中执行多个普通任务，有一个执行完成即可，执行的 EventExecutor，通过 #next() 方法选择。并且，多个任务使用同一个 EventExecutor
+     *
+     * @param tasks
+     * @param <T>
+     * @return
+     * @throws InterruptedException
+     * @throws ExecutionException
+     */
     @Override
     public <T> T invokeAny(Collection<? extends Callable<T>> tasks) throws InterruptedException, ExecutionException {
         return next().invokeAny(tasks);
@@ -110,6 +150,11 @@ public abstract class AbstractEventExecutorGroup implements EventExecutorGroup {
         return next().invokeAny(tasks, timeout, unit);
     }
 
+    /**
+     * 在 EventExecutor 中执行一个普通任务，执行的 EventExecutor，通过 #next() 方法选择
+     *
+     * @param command
+     */
     @Override
     public void execute(Runnable command) {
         next().execute(command);
