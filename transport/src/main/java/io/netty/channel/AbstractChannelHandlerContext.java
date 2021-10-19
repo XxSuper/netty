@@ -16,25 +16,19 @@
 package io.netty.channel;
 
 import io.netty.buffer.ByteBufAllocator;
-import io.netty.util.Attribute;
-import io.netty.util.AttributeKey;
-import io.netty.util.DefaultAttributeMap;
-import io.netty.util.Recycler;
-import io.netty.util.ReferenceCountUtil;
-import io.netty.util.ResourceLeakHint;
+import io.netty.util.*;
 import io.netty.util.concurrent.EventExecutor;
 import io.netty.util.concurrent.OrderedEventExecutor;
-import io.netty.util.internal.PromiseNotificationUtil;
-import io.netty.util.internal.ThrowableUtil;
-import io.netty.util.internal.ObjectUtil;
-import io.netty.util.internal.StringUtil;
-import io.netty.util.internal.SystemPropertyUtil;
+import io.netty.util.internal.*;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
 import java.net.SocketAddress;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
+/**
+ * io.netty.channel.AbstractChannelHandlerContext，实现 ChannelHandlerContext、ResourceLeakHint 接口，继承 DefaultAttributeMap 类，ChannelHandlerContext 抽象基类
+ */
 abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         implements ChannelHandlerContext, ResourceLeakHint {
 
@@ -72,11 +66,11 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
      */
     private static final int INIT = 0;// 初始化
     /**
-     * 是否为 inbound
+     * 是否为 inbound 处理器
      */
     private final boolean inbound;
     /**
-     * 是否为 outbound
+     * 是否为 outbound 处理器
      */
     private final boolean outbound;
     /**
@@ -84,7 +78,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
      */
     private final DefaultChannelPipeline pipeline;
     /**
-     * 名字
+     * 处理器名字
      */
     private final String name;
     /**
@@ -107,7 +101,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
     // There is no need to make this volatile as at worse it will just create a few more instances then needed.
     private Tasks invokeTasks;
     /**
-     * 处理器状态
+     * 处理器状态，共有 4 种状态，初始为 INIT
      */
     private volatile int handlerState = INIT;
 
@@ -225,6 +219,11 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         return this;
     }
 
+    /**
+     * 传递的第一个 next 方法参数为 head (HeadContext) 节点
+     *
+     * @param next 下一个 Inbound 节点
+     */
     static void invokeChannelActive(final AbstractChannelHandlerContext next) {
         // 获得下一个 Inbound 节点的执行器
         EventExecutor executor = next.executor();
@@ -241,11 +240,18 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         }
     }
 
+    /**
+     * 实际上，此时节点的数据类型为 DefaultChannelHandlerContext 类。若它被认为是 Inbound 节点，那么他的处理器的类型会是 ChannelInboundHandler。
+     * 而 io.netty.channel.ChannelInboundHandler 类似 ChannelInboundInvoker，定义了对每个 Inbound 事件的处理。
+     *
+     * 如果节点的 ChannelInboundHandler#channelActive(ChannelHandlerContext ctx) 方法的实现，不调用 AbstractChannelHandlerContext#fireChannelActive() 方法，
+     * 就不会传播 Inbound 事件给下一个节点
+     */
     private void invokeChannelActive() {
         // 判断是否是符合的 ChannelHandler
         if (invokeHandler()) {
             try {
-                // 调用该 ChannelHandler 的 Channel active 方法
+                // 若是符合的 ChannelHandler，调用 ChannelHandler 的 Channel active 方法，处理 Channel active 事件
                 // 如果节点的方法的实现不调用 fireChannelActive() 就不会传播 Inbound 事件给下一个节点
                 ((ChannelInboundHandler) handler()).channelActive(this);
             } catch (Throwable t) {
@@ -253,7 +259,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
                 notifyHandlerException(t);
             }
         } else {
-            // 跳过，传播 Inbound 事件给下一个节点
+            // 若是不符合的 ChannelHandler，则跳过该节点，传播 Inbound 事件给下一个节点
             fireChannelActive();
         }
     }
@@ -504,7 +510,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         if (localAddress == null) {
             throw new NullPointerException("localAddress");
         }
-        // 判断是否为合法的 Promise 对象
+        // 判断 promise 是否为合法的 Promise 对象
         if (isNotValidPromise(promise, false)) {
             // cancelled
             return promise;
@@ -515,8 +521,10 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         EventExecutor executor = next.executor();
         // 调用下一个 Outbound 节点的 bind 方法
         if (executor.inEventLoop()) {
+            // 在 EventLoop 的线程中，调用下一个节点的 AbstractChannelHandlerContext#invokeBind(SocketAddress localAddress, ChannelPromise promise) 方法，传播 bind 事件给下一个节点
             next.invokeBind(localAddress, promise);
         } else {
+            // 如果不在 EventLoop 的线程中，会调用 #safeExecute(EventExecutor executor, Runnable runnable, ChannelPromise promise, Object msg) 方法，提交到 EventLoop 的线程中执行
             safeExecute(executor, new Runnable() {
                 @Override
                 public void run() {
@@ -527,19 +535,23 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         return promise;
     }
 
+    /**
+     * 如果节点的 ChannelOutboundHandler#bind(ChannelHandlerContext ctx, SocketAddress localAddress，ChannelPromise promise) 方法的实现，
+     * 不调用 AbstractChannelHandlerContext#bind(SocketAddress localAddress, ChannelPromise promise) 方法，就不会传播 Outbound 事件给下一个节点
+     */
     private void invokeBind(SocketAddress localAddress, ChannelPromise promise) {
-        // 判断是否符合的 ChannelHandler
+        // 判断是否是符合的 ChannelHandler
         if (invokeHandler()) {
             try {
-                // 调用该 ChannelHandler 的 bind 方法
-                // 如果handel的实现不调用 ctx.bind() 则就不会传播 Outbound 事件给下一个节点
+                // 若是符合的 ChannelHandler，调用该 ChannelHandler 的 bind 方法，处理 bind 事件
+                // 如果 handel 的实现不调用 ctx.bind() 则就不会传播 Outbound 事件给下一个节点
                 ((ChannelOutboundHandler) handler()).bind(this, localAddress, promise);
             } catch (Throwable t) {
-                // 通知 Outbound 事件的传播，发生异常
+                // 如果发生异常，调用 #notifyOutboundHandlerException(Throwable, Promise) 方法，通知 Outbound 事件的传播，发生异常
                 notifyOutboundHandlerException(t, promise);
             }
         } else {
-            // 跳过，传播 Outbound 事件给下一个节点
+            // 若是不符合的 ChannelHandler，则跳过该节点，传播 Outbound 事件给下一个节点
             bind(localAddress, promise);
         }
     }
@@ -851,13 +863,21 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         return writeAndFlush(msg, newPromise());
     }
 
+    /**
+     * 通知 Outbound 事件的传播，发生异常
+     */
     private static void notifyOutboundHandlerException(Throwable cause, ChannelPromise promise) {
         // Only log if the given promise is not of type VoidChannelPromise as tryFailure(...) is expected to return
         // false.
+        // 在方法内部，会调用 PromiseNotificationUtil#tryFailure(Promise<?> p, Throwable cause, InternalLogger logger) 方法，通知 bind 事件对应的 Promise 对应的监听者们
         PromiseNotificationUtil.tryFailure(promise, cause, promise instanceof VoidChannelPromise ? null : logger);
     }
 
+    /**
+     * 通知 Inbound 事件的传播，发生异常。
+     */
     private void notifyHandlerException(Throwable cause) {
+        // 如果是在 `ChannelHandler#exceptionCaught(ChannelHandlerContext ctx, Throwable cause)` 方法中，仅打印错误日志，并 return 返回，否则会形成死循环。
         if (inExceptionCaught(cause)) {
             if (logger.isWarnEnabled()) {
                 logger.warn(
@@ -867,6 +887,10 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
             return;
         }
 
+        // 在 pipeline 中，传播 Exception Caught 事件。Exception Caught 事件在 pipeline 的起始节点，不是 head 头节点，而是发生异常的当前节点开始，
+        // 对于在 pipeline 上传播的 Inbound 事件，在发生异常后，转化成 Exception Caught 事件，继续从当前节点，继续向下传播，如果 Exception Caught 事件在 pipeline 中的传播过程中，
+        // 一直没有处理掉该异常的节点，最终会到达尾节点 tail，，它对 #exceptionCaught(ChannelHandlerContext ctx, Throwable cause) 方法的实现，打印告警日志，
+        // 并调用 ReferenceCountUtil#release(Throwable) 方法，释放需要释放的资源。
         invokeExceptionCaught(cause);
     }
 
@@ -874,10 +898,12 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         do {
             StackTraceElement[] trace = cause.getStackTrace();
             if (trace != null) {
+                // 循环 StackTraceElement。通过 StackTraceElement 的方法名来判断，是不是 ChannelHandler#exceptionCaught(ChannelHandlerContext ctx, Throwable cause) 方法
                 for (StackTraceElement t : trace) {
                     if (t == null) {
                         break;
                     }
+                    // 通过方法名判断
                     if ("exceptionCaught".equals(t.getMethodName())) {
                         return true;
                     }
@@ -885,7 +911,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
             }
 
             cause = cause.getCause();
-        } while (cause != null);
+        } while (cause != null);// 循环异常的 cause()，直到没有
 
         return false;
     }
@@ -951,6 +977,10 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         return false;
     }
 
+    /**
+     * 获得下一个 Inbound 节点。对于 Inbound 事件的传播，是从 pipeline 的头部到尾部
+     * @return
+     */
     private AbstractChannelHandlerContext findContextInbound() {
         // 循环，向后获得一个 Inbound 节点
         AbstractChannelHandlerContext ctx = this;
@@ -960,6 +990,9 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         return ctx;
     }
 
+    /**
+     * 对于 Outbound 事件的传播，是从 pipeline 的尾部到头部
+     */
     private AbstractChannelHandlerContext findContextOutbound() {
         // 循环，向前获得一个 Outbound 节点
         AbstractChannelHandlerContext ctx = this;
@@ -982,10 +1015,11 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
     }
 
     /**
-     * 设置 ChannelHandler 添加完成
+     * 设置 ChannelHandler 添加完成。完成后，状态有两种结果：REMOVE_COMPLETE、ADD_COMPLETE
      * 循环 + CAS 保证多线程下的安全变更 handlerState 属性
      */
     final boolean setAddComplete() {
+        // 循环 + CAS 保证多线程下的安全变更 handlerState 属性
         for (;;) {
             int oldState = handlerState;
             if (oldState == REMOVE_COMPLETE) {
@@ -1004,6 +1038,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
      * 设置 ChannelHandler 准备添加中
      */
     final void setAddPending() {
+        // 当且仅当 INIT 可修改为 ADD_PENDING。理论来说，这是一个绝对会成功的操作
         boolean updated = HANDLER_STATE_UPDATER.compareAndSet(this, INIT, ADD_PENDING);
         assert updated; // This should always be true as it MUST be called before setAddComplete() or setRemoved().
     }
@@ -1013,7 +1048,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         // any pipeline events ctx.handler() will miss them because the state will not allow it.
         // 设置 AbstractChannelHandlerContext 已添加
         if (setAddComplete()) {
-            // 回调 ChannelHandler 添加完成( added )事件
+            // 回调 ChannelHandler 添加完成 (added) 事件。一般来说，通过这个方法，来初始化 ChannelHandler。注意，因为这个方法的执行在 EventLoop 的线程中，所以要尽量避免执行时间过长。
             handler().handlerAdded(this);
         }
     }
@@ -1021,7 +1056,8 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
     final void callHandlerRemoved() throws Exception {
         try {
             // Only call handlerRemoved(...) if we called handlerAdded(...) before.
-            // 如果handel状态为添加完成，回调handler移除完成事件
+            // 如果 handel 状态为添加完成，回调 ChannelHandler 移除完成事件。一般来说，通过这个方法，来释放 ChannelHandler 占用的资源
+            // 注意，因为这个方法的执行在 EventLoop 的线程中，所以要尽量避免执行时间过长
             if (handlerState == ADD_COMPLETE) {
                 handler().handlerRemoved(this);
             }
@@ -1039,10 +1075,12 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
      * If this method returns {@code false} we will not invoke the {@link ChannelHandler} but just forward the event.
      * This is needed as {@link DefaultChannelPipeline} may already put the {@link ChannelHandler} in the linked-list
      * but not called {@link ChannelHandler#handlerAdded(ChannelHandlerContext)}.
+     *
+     * 判断是否是符合的 ChannelHandler
      */
     private boolean invokeHandler() {
         // Store in local variable to reduce volatile reads.
-        // 对于 ordered = true 的节点，必须 ChannelHandler 已经添加完成
+        // 对于 ordered = true 的节点，必须 ChannelHandler 已经添加完成，对于 ordered = false 的节点，没有 ChannelHandler 的要求
         int handlerState = this.handlerState;
         return handlerState == ADD_COMPLETE || (!ordered && handlerState == ADD_PENDING);
     }
@@ -1072,7 +1110,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
                 // 发生异常，回调通知 promise 相关的异常
                 promise.setFailure(cause);
             } finally {
-                // 释放 msg 相关的资源z
+                // 释放 msg 相关的资源
                 if (msg != null) {
                     ReferenceCountUtil.release(msg);
                 }
@@ -1212,24 +1250,40 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
 
     private static final class Tasks {
         private final AbstractChannelHandlerContext next;
+
+        /**
+         * 执行 Channel ReadComplete 事件的任务
+         */
         private final Runnable invokeChannelReadCompleteTask = new Runnable() {
             @Override
             public void run() {
                 next.invokeChannelReadComplete();
             }
         };
+
+        /**
+         * 执行 Channel Read 事件的任务
+         */
         private final Runnable invokeReadTask = new Runnable() {
             @Override
             public void run() {
                 next.invokeRead();
             }
         };
+
+        /**
+         * 执行 Channel WritableStateChanged 事件的任务
+         */
         private final Runnable invokeChannelWritableStateChangedTask = new Runnable() {
             @Override
             public void run() {
                 next.invokeChannelWritabilityChanged();
             }
         };
+
+        /**
+         * 执行 flush 事件的任务
+         */
         private final Runnable invokeFlushTask = new Runnable() {
             @Override
             public void run() {

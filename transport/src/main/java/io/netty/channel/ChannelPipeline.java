@@ -212,6 +212,26 @@ import java.util.NoSuchElementException;
  * A {@link ChannelHandler} can be added or removed at any time because a {@link ChannelPipeline} is thread safe.
  * For example, you can insert an encryption handler when sensitive information is about to be exchanged, and remove it
  * after the exchange.
+ *
+ * io.netty.channel.ChannelPipeline，继承 ChannelInboundInvoker、ChannelOutboundInvoker、Iterable 接口，Channel Pipeline 接口
+ *
+ * 在 ChannelHandler 中处理事件时，如果这个 Handler 不是最后一个 Handler，则需要调用 ctx.xxx (例如 ctx.connect) 将此事件继续传播下去. 如果不这样做，那么此事件的传播会提前终止.
+ * Outbound 事件流: Context.OUT_EVT -> Connect.findContextOutbound -> nextContext.invokeOUT_EVT -> nextHandler.OUT_EVT -> nextContext.OUT_EVT
+ * Outbound 事件:
+ * 1、Outbound 事件是【请求】事件(由 Connect 发起一个请求, 并最终由 Unsafe 处理这个请求)
+ * 2、Outbound 事件的发起者是 Channel
+ * 3、Outbound 事件的处理者是 Unsafe
+ * 4、Outbound 事件在 Pipeline 中的传输方向是 tail -> head
+ *
+ * 在 ChannelHandler 中处理事件时，如果这个 Handler 不是最后一个 Handler，则需要调用 ctx.fireIN_EVT (例如 ctx.fireChannelActive) 将此事件继续传播下去. 如果不这样做，那么此事件的传播会提前终止.
+ * Inbound 事件流: Context.fireIN_EVT -> Connect.findContextInbound -> nextContext.invokeIN_EVT -> nextHandler.IN_EVT -> nextContext.fireIN_EVT
+ * Inbound 事件:
+ * 1、Inbound 事件是【通知】事件，当某件事情已经就绪后，通知上层.
+ * 2、Inbound 事件发起者是 Unsafe
+ * 3、Inbound 事件的处理者是 TailContext，如果用户没有实现自定义的处理方法，那么 Inbound 事件默认的处理者是 TailContext，并且其处理方法是空实现.
+ * 4、Inbound 事件在 Pipeline 中传输方向是 head(头) -> tail(尾)
+ *
+ *
  */
 public interface ChannelPipeline
         extends ChannelInboundInvoker, ChannelOutboundInvoker, Iterable<Entry<String, ChannelHandler>> {

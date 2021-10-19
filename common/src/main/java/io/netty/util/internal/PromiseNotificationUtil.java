@@ -61,7 +61,9 @@ public final class PromiseNotificationUtil {
      * Try to mark the {@link Promise} as failure and log if {@code logger} is not {@code null} in case this fails.
      */
     public static void tryFailure(Promise<?> p, Throwable cause, InternalLogger logger) {
+        // 通知 Promise 的监听器们，发生了异常
         if (!p.tryFailure(cause) && logger != null) {
+            // 如果 tryFailure(cause) 返回 false 通知 Promise 失败，那么就会使用 logger 打印错误日志
             Throwable err = p.cause();
             if (err == null) {
                 logger.warn("Failed to mark a promise as failure because it has succeeded already: {}", p, cause);

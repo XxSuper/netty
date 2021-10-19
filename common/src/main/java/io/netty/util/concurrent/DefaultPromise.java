@@ -534,13 +534,17 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     }
 
     private boolean setValue0(Object objResult) {
+        // 设置 Promise 的结果
         if (RESULT_UPDATER.compareAndSet(this, null, objResult) ||
             RESULT_UPDATER.compareAndSet(this, UNCANCELLABLE, objResult)) {
             if (checkNotifyWaiters()) {
+                // 通知监听器
                 notifyListeners();
             }
+            // 返回成功
             return true;
         }
+        // 返回失败
         return false;
     }
 

@@ -35,6 +35,8 @@ import java.util.concurrent.RejectedExecutionException;
 
 /**
  * A skeletal {@link Channel} implementation.
+ *
+ * io.netty.channel.AbstractChannel 实现的 ChannelOutboundInvoker 接口
  */
 public abstract class AbstractChannel extends DefaultAttributeMap implements Channel {
 
@@ -231,6 +233,9 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
         return registered;
     }
 
+    /**
+     * 实现自 ChannelOutboundInvoker 接口，Channel 是 bind 的发起者
+     */
     @Override
     public ChannelFuture bind(SocketAddress localAddress) {
         return pipeline.bind(localAddress);
@@ -607,7 +612,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             // 记录 Channel 是否激活，NioServerSocketChannel 的 #isActive() 的方法实现，判断 ServerSocketChannel 是否绑定端口
             boolean wasActive = isActive();
             try {
-                // 绑定 Channel 的端口，此处，服务端的 Java 原生 NIO ServerSocketChannel 绑定端口
+                // 绑定 Channel 的端口。此处，服务端的 Java 原生 NIO ServerSocketChannel 绑定端口
                 doBind(localAddress);
             } catch (Throwable t) {
                 safeSetFailure(promise, t);
@@ -620,7 +625,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 invokeLater(new Runnable() {
                     @Override
                     public void run() {
-                        // 触发 Channel 激活的事件
+                        // 触发 Channel 激活的事件。调用 ChannelPipeline#fireChannelActive() 方法，Unsafe 是 fireChannelActive 的发起者
                         pipeline.fireChannelActive();
                     }
                 });

@@ -17,14 +17,19 @@ package io.netty.channel;
 
 import io.netty.util.concurrent.EventExecutor;
 
+/**
+ * io.netty.channel.DefaultChannelHandlerContext，实现 AbstractChannelHandlerContext 抽象类
+ */
 final class DefaultChannelHandlerContext extends AbstractChannelHandlerContext {
 
     private final ChannelHandler handler;
 
+    /**
+     * 不同于 HeadContext、TailContext，它们自身就是一个 Context 的同时，也是一个 ChannelHandler。而 DefaultChannelHandlerContext 是内嵌一个 ChannelHandler 对象，即 handler。这个属性通过构造方法传入
+     */
     DefaultChannelHandlerContext(
             DefaultChannelPipeline pipeline, EventExecutor executor, String name, ChannelHandler handler) {
-        // 调用父 AbstractChannelHandlerContext 的构造方法
-        // 通过判断传入的 handler 是否为 ChannelInboundHandler 和 ChannelOutboundHandler 来分别判断是否为 inbound 和 outbound
+        // 调用父 AbstractChannelHandlerContext 的构造方法，通过判断传入的 handler 是否为 ChannelInboundHandler 和 ChannelOutboundHandler 来分别判断是否为 inbound 和 outbound
         super(pipeline, executor, name, isInbound(handler), isOutbound(handler));
         if (handler == null) {
             throw new NullPointerException("handler");
