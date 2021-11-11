@@ -42,14 +42,21 @@ import java.io.Serializable;
  * <li>{@code io.netty.processId} - an integer between 0 and 65535</li>
  * </ul>
  * </p>
+ *
+ * io.netty.channel.ChannelId 实现 Serializable、Comparable 接口，Channel 编号接口。ChanelId 的默认实现类为 io.netty.channel.DefaultChannelId
+ *
  */
 public interface ChannelId extends Serializable, Comparable<ChannelId> {
     /**
+     * 返回的编号，短，但是全局非唯一
+     *
      * Returns the short but globally non-unique string representation of the {@link ChannelId}.
      */
     String asShortText();
 
     /**
+     * 返回的编号，长，但是全局唯一
+     *
      * Returns the long yet globally unique string representation of the {@link ChannelId}.
      */
     String asLongText();

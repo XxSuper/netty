@@ -1096,6 +1096,8 @@ public class DefaultChannelPipeline implements ChannelPipeline {
 
     @Override
     public final ChannelFuture disconnect() {
+        // 在方法内部，会调用 TailContext#disconnect() 方法，将 disconnect 事件在 pipeline 中，从尾节点向头节点传播。
+        // TailContext 对 #disconnect() 方法的实现，是从 AbstractChannelHandlerContext 抽象类继承
         return tail.disconnect();
     }
 
@@ -1111,6 +1113,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
 
     @Override
     public final ChannelPipeline flush() {
+        // 在方法内部，会调用 TailContext#flush() 方法，将 flush 事件在 pipeline 中，从尾节点向头节点传播。
         tail.flush();
         return this;
     }
@@ -1157,8 +1160,12 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         return tail.write(msg);
     }
 
+    /**
+     * 在方法内部，会调用 TailContext#write(Object msg, ...) 方法，将 write 事件在 pipeline 中，从尾节点向头节点传播。
+     */
     @Override
     public final ChannelFuture write(Object msg, ChannelPromise promise) {
+        // TailContext 对 TailContext#write(Object msg, ...) 方法的实现，是从 AbstractChannelHandlerContext 抽象类继承
         return tail.write(msg, promise);
     }
 
@@ -1169,6 +1176,8 @@ public class DefaultChannelPipeline implements ChannelPipeline {
 
     @Override
     public final ChannelFuture writeAndFlush(Object msg) {
+        // 在方法内部，会调用 TailContext#writeAndFlush(Object msg, ...) 方法，将 write 和 flush 两个事件在 pipeline 中，从尾节点向头节点传播。
+        // TailContext 对 TailContext#writeAndFlush(Object msg, ...) 方法的实现，是从 AbstractChannelHandlerContext 抽象类继承
         return tail.writeAndFlush(msg);
     }
 
@@ -1385,6 +1394,9 @@ public class DefaultChannelPipeline implements ChannelPipeline {
     protected void onUnhandledChannelWritabilityChanged() {
     }
 
+    /**
+     * 增加 ChannelOutboundBuffer 的 totalPendingSize 属性
+     */
     @UnstableApi
     protected void incrementPendingOutboundBytes(long size) {
         ChannelOutboundBuffer buffer = channel.unsafe().outboundBuffer();
@@ -1397,6 +1409,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
     protected void decrementPendingOutboundBytes(long size) {
         ChannelOutboundBuffer buffer = channel.unsafe().outboundBuffer();
         if (buffer != null) {
+            // 减少 ChannelOutboundBuffer 的 totalPendingSize 属性
             buffer.decrementPendingOutboundBytes(size);
         }
     }
@@ -1541,13 +1554,21 @@ public class DefaultChannelPipeline implements ChannelPipeline {
             unsafe.beginRead();
         }
 
+        /**
+         * 在 pipeline 中，write 事件最终会到达 HeadContext 节点。而 HeadContext 的 #write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) 方法，会处理该事件
+         */
         @Override
         public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
+            // 在方法内部，会调用 AbstractUnsafe#write(Object msg, ChannelPromise promise) 方法，将数据写到内存队列中
             unsafe.write(msg, promise);
         }
 
+        /**
+         * 在 pipeline 中，flush 事件最终会到达 HeadContext 节点。而 HeadContext 的 #flush() 方法，会处理该事件
+         */
         @Override
         public void flush(ChannelHandlerContext ctx) {
+            // 在方法内部，会调用 AbstractUnsafe#flush() 方法，刷新内存队列，将其中的数据写入到对端。
             unsafe.flush();
         }
 

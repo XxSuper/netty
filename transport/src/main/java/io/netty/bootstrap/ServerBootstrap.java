@@ -15,18 +15,7 @@
  */
 package io.netty.bootstrap;
 
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelConfig;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelHandler;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelOption;
-import io.netty.channel.ChannelPipeline;
-import io.netty.channel.EventLoopGroup;
-import io.netty.channel.ServerChannel;
+import io.netty.channel.*;
 import io.netty.util.AttributeKey;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
@@ -214,6 +203,7 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
             @Override
             public void initChannel(final Channel ch) throws Exception {
                 final ChannelPipeline pipeline = ch.pipeline();
+                // 添加配置的 ChannelHandler 到 pipeline 中。
                 ChannelHandler handler = config.handler();
                 if (handler != null) {
                     // 添加启动器配置的 ChannelHandler 到 pipeline 中
@@ -263,14 +253,24 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
         return new Map.Entry[size];
     }
 
+    /**
+     * ServerBootstrapAcceptor，继承 ChannelInboundHandlerAdapter 类，服务器接收器 (acceptor)，负责将接受的客户端的 NioSocketChannel 注册到 EventLoop 中。
+     * 另外，从继承的是 ChannelInboundHandlerAdapter 类，可以看出它是 Inbound 事件处理器
+     */
     private static class ServerBootstrapAcceptor extends ChannelInboundHandlerAdapter {
 
         private final EventLoopGroup childGroup;
         private final ChannelHandler childHandler;
         private final Entry<ChannelOption<?>, Object>[] childOptions;
         private final Entry<AttributeKey<?>, Object>[] childAttrs;
+        /**
+         * 自动恢复接受客户端连接的任务
+         */
         private final Runnable enableAutoReadTask;
 
+        /**
+         * 在服务端的启动过程中，我们看到 ServerBootstrapAcceptor 注册到服务端的 NioServerSocketChannel 的 pipeline 的尾部
+         */
         ServerBootstrapAcceptor(
                 final Channel channel, EventLoopGroup childGroup, ChannelHandler childHandler,
                 Entry<ChannelOption<?>, Object>[] childOptions, Entry<AttributeKey<?>, Object>[] childAttrs) {
@@ -292,29 +292,40 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
             };
         }
 
+        /**
+         * 将接受的客户端的 NioSocketChannel 注册到 EventLoop 中
+         */
         @Override
         @SuppressWarnings("unchecked")
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
+            // 接受的客户端的 NioSocketChannel 对象
             final Channel child = (Channel) msg;
 
+            // 将配置的子 Channel 的处理器，添加到 NioSocketChannel 中
             child.pipeline().addLast(childHandler);
 
+            // 设置 NioSocketChannel 的配置项
             setChannelOptions(child, childOptions, logger);
 
+            // 设置 NioSocketChannel 的属性
             for (Entry<AttributeKey<?>, Object> e: childAttrs) {
                 child.attr((AttributeKey<Object>) e.getKey()).set(e.getValue());
             }
 
             try {
+                // 注册客户端的 NioSocketChannel 到 work EventLoop 中
+                // 将客户端的 NioSocketChannel 对象，从 worker EventLoopGroup 中选择一个 EventLoop，注册到其上，在注册完成之后，该 worker EventLoop 就会开始轮询该客户端是否有数据写入
                 childGroup.register(child).addListener(new ChannelFutureListener() {
                     @Override
                     public void operationComplete(ChannelFuture future) throws Exception {
+                        // 注册失败，强制关闭客户端的 NioSocketChannel 连接
                         if (!future.isSuccess()) {
                             forceClose(child, future.cause());
                         }
                     }
                 });
             } catch (Throwable t) {
+                // 发生异常，强制关闭客户端的 NioSocketChannel 连接
                 forceClose(child, t);
             }
         }
@@ -324,17 +335,23 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
             logger.warn("Failed to register an accepted channel: {}", child, t);
         }
 
+        /**
+         * 当捕获到异常时，暂停 1 秒，不再接受新的客户端连接；而后，再恢复接受新的客户端连接。
+         */
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
             final ChannelConfig config = ctx.channel().config();
             if (config.isAutoRead()) {
                 // stop accept new connections for 1 second to allow the channel to recover
                 // See https://github.com/netty/netty/issues/1328
+                // 关闭接受新的客户端连接
                 config.setAutoRead(false);
+                // 发起 1 秒的延迟任务，恢复重新开启接受新的客户端连接
                 ctx.channel().eventLoop().schedule(enableAutoReadTask, 1, TimeUnit.SECONDS);
             }
             // still let the exceptionCaught event flow through the pipeline to give the user
             // a chance to do something with it
+            // 继续传播 exceptionCaught 给下一个节点
             ctx.fireExceptionCaught(cause);
         }
     }

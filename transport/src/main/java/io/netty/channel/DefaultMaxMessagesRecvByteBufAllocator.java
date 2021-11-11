@@ -15,11 +15,11 @@
  */
 package io.netty.channel;
 
-import static io.netty.util.internal.ObjectUtil.checkPositive;
-
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.util.UncheckedBooleanSupplier;
+
+import static io.netty.util.internal.ObjectUtil.checkPositive;
 
 /**
  * Default implementation of {@link MaxMessagesRecvByteBufAllocator} which respects {@link ChannelConfig#isAutoRead()}
@@ -95,6 +95,7 @@ public abstract class DefaultMaxMessagesRecvByteBufAllocator implements MaxMessa
         private final UncheckedBooleanSupplier defaultMaybeMoreSupplier = new UncheckedBooleanSupplier() {
             @Override
             public boolean get() {
+                // 最后读取的字节数，是否等于，最大可写入的字节数
                 return attemptedBytesRead == lastBytesRead;
             }
         };
@@ -104,8 +105,11 @@ public abstract class DefaultMaxMessagesRecvByteBufAllocator implements MaxMessa
          */
         @Override
         public void reset(ChannelConfig config) {
+            // 重置 ChannelConfig 对象
             this.config = config;
+            // 重置 maxMessagePerRead 属性
             maxMessagePerRead = maxMessagesPerRead();
+            // 重置 totalMessages 和 totalBytesRead 属性
             totalMessages = totalBytesRead = 0;
         }
 
@@ -121,8 +125,10 @@ public abstract class DefaultMaxMessagesRecvByteBufAllocator implements MaxMessa
 
         @Override
         public void lastBytesRead(int bytes) {
+            // 设置最后一次读取字节数
             lastBytesRead = bytes;
             if (bytes > 0) {
+                // 总共读取字节数
                 totalBytesRead += bytes;
             }
         }
@@ -137,6 +143,10 @@ public abstract class DefaultMaxMessagesRecvByteBufAllocator implements MaxMessa
             return continueReading(defaultMaybeMoreSupplier);
         }
 
+        /**
+         * 对于 NioServerSocketChannel 来说，此时 totalBytesRead 等于 0，所以会返回 false。因此，循环会结束，每次只接受一个新的客户端连接。
+         * 当然，因为服务端 NioServerSocketChannel 对 Selectionkey.OP_ACCEPT 事件感兴趣，所以后续的新的客户端连接还是会被接受的
+         */
         @Override
         public boolean continueReading(UncheckedBooleanSupplier maybeMoreDataSupplier) {
             return config.isAutoRead() &&

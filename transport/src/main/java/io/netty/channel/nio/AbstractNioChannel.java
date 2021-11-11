@@ -167,6 +167,8 @@ public abstract class AbstractNioChannel extends AbstractChannel {
     }
 
     /**
+     * 在 EventLoop 的线程中，调用 AbstractNioUnsafe#clearReadPending0() 方法，移除对"读"事件的感兴趣 (对于 NioServerSocketChannel 的"读"事件就是 SelectionKey.OP_ACCEPT)
+     * <p>
      * Set read pending to {@code false}.
      */
     protected final void clearReadPending() {
@@ -194,6 +196,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
 
     private void clearReadPending0() {
         readPending = false;
+        // 移除对"读"事件的感兴趣
         ((AbstractNioUnsafe) unsafe()).removeReadOp();
     }
 
@@ -226,12 +229,15 @@ public abstract class AbstractNioChannel extends AbstractChannel {
             // Check first if the key is still valid as it may be canceled as part of the deregistration
             // from the EventLoop
             // See https://github.com/netty/netty/issues/2104
+            // 忽略，如果 SelectionKey 不合法，例如已经取消
             if (!key.isValid()) {
                 return;
             }
+            // 移除对"读"事件的感兴趣
             int interestOps = key.interestOps();
             if ((interestOps & readInterestOp) != 0) {
                 // only remove readInterestOp if needed
+                // 通过取反求并，后调用 SelectionKey#interestOps(interestOps) 方法，仅移除对"读"事件的感兴趣
                 key.interestOps(interestOps & ~readInterestOp);
             }
         }
@@ -396,25 +402,43 @@ public abstract class AbstractNioChannel extends AbstractChannel {
             }
         }
 
+        /**
+         * AbstractNioUnsafe 重写了 #flush0() 方法
+         */
         @Override
         protected final void flush0() {
             // Flush immediately only when there's no pending flush.
             // If there's a pending flush operation, event loop will call forceFlush() later,
             // and thus there's no need to call it now.
+            // 判断是否已经处于 flush 准备中
             if (!isFlushPending()) {
                 super.flush0();
             }
         }
 
+        /**
+         * 通过 Selector 轮询到 Channel 的 OP_WRITE 就绪时，调用 AbstractNioUnsafe#forceFlush() 方法，强制 flush
+         */
         @Override
         public final void forceFlush() {
             // directly call super.flush0() to force a flush now
+            // 在完成强制 flush 之后，会取消对 SelectionKey.OP_WRITE 事件的感兴趣
             super.flush0();
         }
 
+        /**
+         * 正常情况下，在异常情况下会有所不同。我们知道，Channel 大多数情况下是可写的，所以不需要专门去注册 SelectionKey.OP_WRITE 事件。所以在 Netty 的实现中，
+         * 默认 Channel 是可写的，当写入失败的时候，再去注册 SelectionKey.OP_WRITE 事件。这意味着什么呢？在 #flush() 方法中，如果写入数据到 Channel 失败，
+         * 会通过注册 SelectionKey.OP_WRITE 事件，然后在轮询到 Channel 可写时，再 "回调" #forceFlush() 方法。
+         * <p>
+         * 这就是这段代码的目的，如果处于对 SelectionKey.OP_WRITE 事件感兴趣，说明 Channel 此时是不可写的，那么调用父类 AbstractUnsafe 的 #flush0() 方法，也没有意义，所以就不调用。
+         */
         private boolean isFlushPending() {
             SelectionKey selectionKey = selectionKey();
-            return selectionKey.isValid() && (selectionKey.interestOps() & SelectionKey.OP_WRITE) != 0;
+            // 合法
+            return selectionKey.isValid()
+                    // 对 SelectionKey.OP_WRITE 事件不感兴趣
+                    && (selectionKey.interestOps() & SelectionKey.OP_WRITE) != 0;
         }
     }
 
@@ -449,8 +473,12 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         }
     }
 
+    /**
+     * 执行取消注册
+     */
     @Override
     protected void doDeregister() throws Exception {
+        // 调用 EventLoop#cancel(SelectionKey key) 方法，取消 SelectionKey，即相当于调用 SelectionKey#cancel() 方法。如此，对通道的读写等等 IO 就绪事件不再感兴趣，也不会做出相应的处理。
         eventLoop().cancel(selectionKey());
     }
 
@@ -550,8 +578,12 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         return buf;
     }
 
+    /**
+     * 适用于客户端正在发起对服务端的连接的阶段。
+     */
     @Override
     protected void doClose() throws Exception {
+        // 通知 connectPromise 异常失败
         ChannelPromise promise = connectPromise;
         if (promise != null) {
             // Use tryFailure() instead of setFailure() to avoid the race against cancel().
@@ -559,6 +591,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
             connectPromise = null;
         }
 
+        // 取消 connectTimeoutFuture 等待
         ScheduledFuture<?> future = connectTimeoutFuture;
         if (future != null) {
             future.cancel(false);

@@ -19,11 +19,11 @@ import io.netty.channel.ChannelException;
 import io.netty.channel.ChannelMetadata;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelOutboundBuffer;
-import io.netty.util.internal.SocketUtils;
 import io.netty.channel.nio.AbstractNioMessageChannel;
 import io.netty.channel.socket.DefaultServerSocketChannelConfig;
 import io.netty.channel.socket.ServerSocketChannelConfig;
 import io.netty.util.internal.PlatformDependent;
+import io.netty.util.internal.SocketUtils;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
@@ -41,6 +41,11 @@ import java.util.Map;
 /**
  * A {@link io.netty.channel.socket.ServerSocketChannel} implementation which uses
  * NIO selector based implementation to accept new connections.
+ *
+ * Netty NIO 服务端 NioServerSocketChannel 接受( accept )客户端连接的过程：
+ * 1、服务端 NioServerSocketChannel 的 boss EventLoop 线程轮询是否有新的客户端连接接入。
+ * 2、当轮询到有新的连接接入，封装连入的客户端的 SocketChannel 为 Netty NioSocketChannel 对象。
+ * 3、选择一个服务端 NioServerSocketChannel 的 worker EventLoop，将客户端的 NioSocketChannel 注册到其上。并且，注册客户端的 NioSocketChannel 的读事件，开始轮询该客户端是否有数据写入。
  */
 public class NioServerSocketChannel extends AbstractNioMessageChannel
                              implements io.netty.channel.socket.ServerSocketChannel {
@@ -142,30 +147,38 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
         }
     }
 
+    /**
+     * 执行 Java 原生 NIO ServerSocketChannel 关闭
+     */
     @Override
     protected void doClose() throws Exception {
+        // 执行 Java 原生 NIO ServerSocketChannel 关闭
         javaChannel().close();
     }
 
     @Override
     protected int doReadMessages(List<Object> buf) throws Exception {
+        // 接受客户端连接
         SocketChannel ch = SocketUtils.accept(javaChannel());
 
         try {
+            // 基于客户端的 NIO SocketChannel，创建 Netty NioSocketChannel 对象
             if (ch != null) {
                 buf.add(new NioSocketChannel(this, ch));
+                // 返回 1，表示成功接受了 1 个新的客户端连接
                 return 1;
             }
         } catch (Throwable t) {
             logger.warn("Failed to create a new channel from an accepted socket.", t);
 
             try {
+                // 发生异常，关闭客户端的 SocketChannel 连接，并打印告警日志
                 ch.close();
             } catch (Throwable t2) {
                 logger.warn("Failed to close a socket.", t2);
             }
         }
-
+        // 返回 0，表示成功接受 0 个新的客户端连接
         return 0;
     }
 

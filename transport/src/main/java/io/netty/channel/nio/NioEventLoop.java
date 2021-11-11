@@ -853,6 +853,8 @@ public final class NioEventLoop extends SingleThreadEventLoop {
             if ((readyOps & SelectionKey.OP_WRITE) != 0) {// 写事件准备好了
                 // Call forceFlush which will also take care of clear the OP_WRITE once there is nothing left to write
                 // 向 Channel 写入数据，在完成写入数据后，会移除对 OP_WRITE 的感兴趣
+                // 在写入到 Channel 到对端，若 TCP 数据发送缓冲区已满，这将导致 Channel 不写可，此时会注册对该 Channel 的 SelectionKey.OP_WRITE 事件感兴趣。
+                // 从而实现，再在 Channel 可写后，进行强制 flush，向 Channel 写入数据
                 ch.unsafe().forceFlush();
             }
 
@@ -860,6 +862,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
             // to a spin loop
             // SelectionKey.OP_READ 或 SelectionKey.OP_ACCEPT 就绪
             // readyOps == 0 是对 JDK Bug 的处理，防止空的死循环
+            // 当 (readyOps & SelectionKey.OP_ACCEPT) != 0 时，这就是服务端 NioServerSocketChannel 的 boss EventLoop 线程轮询到有新的客户端连接接入
             if ((readyOps & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT)) != 0 || readyOps == 0) {// readyOps == 0为对JDK Bug的处理，防止死循环
                 // 处理读或者接受客户端连接的事件
                 unsafe.read();// 读事件以及服务端的 Accept 事件都抽象为 read() 事件

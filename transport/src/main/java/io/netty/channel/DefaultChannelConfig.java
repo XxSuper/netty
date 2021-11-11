@@ -23,21 +23,8 @@ import java.util.Map.Entry;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
-import static io.netty.channel.ChannelOption.ALLOCATOR;
-import static io.netty.channel.ChannelOption.AUTO_CLOSE;
-import static io.netty.channel.ChannelOption.AUTO_READ;
-import static io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS;
-import static io.netty.channel.ChannelOption.MAX_MESSAGES_PER_READ;
-import static io.netty.channel.ChannelOption.MESSAGE_SIZE_ESTIMATOR;
-import static io.netty.channel.ChannelOption.RCVBUF_ALLOCATOR;
-import static io.netty.channel.ChannelOption.SINGLE_EVENTEXECUTOR_PER_GROUP;
-import static io.netty.channel.ChannelOption.WRITE_BUFFER_HIGH_WATER_MARK;
-import static io.netty.channel.ChannelOption.WRITE_BUFFER_LOW_WATER_MARK;
-import static io.netty.channel.ChannelOption.WRITE_BUFFER_WATER_MARK;
-import static io.netty.channel.ChannelOption.WRITE_SPIN_COUNT;
-import static io.netty.util.internal.ObjectUtil.checkNotNull;
-import static io.netty.util.internal.ObjectUtil.checkPositive;
-import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
+import static io.netty.channel.ChannelOption.*;
+import static io.netty.util.internal.ObjectUtil.*;
 
 /**
  * The default {@link ChannelConfig} implementation.
@@ -47,6 +34,9 @@ public class DefaultChannelConfig implements ChannelConfig {
 
     private static final int DEFAULT_CONNECT_TIMEOUT = 30000;
 
+    /**
+     * {@link #autoRead} 的原子更新器
+     */
     private static final AtomicIntegerFieldUpdater<DefaultChannelConfig> AUTOREAD_UPDATER =
             AtomicIntegerFieldUpdater.newUpdater(DefaultChannelConfig.class, "autoRead");
     private static final AtomicReferenceFieldUpdater<DefaultChannelConfig, WriteBufferWaterMark> WATERMARK_UPDATER =
@@ -61,6 +51,12 @@ public class DefaultChannelConfig implements ChannelConfig {
 
     private volatile int connectTimeoutMillis = DEFAULT_CONNECT_TIMEOUT;
     private volatile int writeSpinCount = 16;
+
+    /**
+     * 是否开启自动读取的开关
+     * 1 - 开启
+     * 0 - 关闭
+     */
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int autoRead = 1;
     private volatile boolean autoClose = true;
@@ -320,10 +316,14 @@ public class DefaultChannelConfig implements ChannelConfig {
 
     @Override
     public ChannelConfig setAutoRead(boolean autoRead) {
+        // 原子更新，并且获得更新前的值
+        // 使用 AUTOREAD_UPDATER 更新 autoRead 字段，并获得更新前的值。为什么需要获取更新前的值呢？当 autoRead 有变化的时候，才进行后续的逻辑。
         boolean oldAutoRead = AUTOREAD_UPDATER.getAndSet(this, autoRead ? 1 : 0) == 1;
+        // 恢复重启开启接受新的客户端连接，发起读取
         if (autoRead && !oldAutoRead) {
             channel.read();
         } else if (!autoRead && oldAutoRead) {
+            // 关闭接受新的客户端连接，关闭读取，调用 #autoReadCleared() 方法，移除对 SelectionKey.OP_ACCEPT 事件的感兴趣
             autoReadCleared();
         }
         return this;

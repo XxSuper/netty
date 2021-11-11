@@ -602,6 +602,7 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
 
     @Override
     public ChannelFuture disconnect(final ChannelPromise promise) {
+        // 判断是否为合法的 Promise 对象
         if (isNotValidPromise(promise, false)) {
             // cancelled
             return promise;
@@ -612,9 +613,14 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         if (executor.inEventLoop()) {
             // Translate disconnect to close if the channel has no notion of disconnect-reconnect.
             // So far, UDP/IP is the only transport that has such behavior.
+            // 判断 Channel 是否支持 disconnect 操作，只有 Java 原生 UDP DatagramSocket 支持 disconnect 操作。
             if (!channel().metadata().hasDisconnect()) {
+                // 如果没有 disconnect 操作，则执行 close 事件在 pipeline 上
+                // 如果不支持，则转换执行 close 事件在 pipeline 上。
                 next.invokeClose(promise);
             } else {
+                // 如果有 disconnect 操作，则执行 disconnect 事件在 pipeline 上
+                // 如果支持，则保持执行 disconnect 事件在 pipeline 上
                 next.invokeDisconnect(promise);
             }
         } else {
@@ -622,8 +628,10 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
                 @Override
                 public void run() {
                     if (!channel().metadata().hasDisconnect()) {
+                        // 如果没有 disconnect 操作，则执行 close 事件在 pipeline 上
                         next.invokeClose(promise);
                     } else {
+                        // 如果有 disconnect 操作，则执行 disconnect 事件在 pipeline 上
                         next.invokeDisconnect(promise);
                     }
                 }
@@ -745,6 +753,8 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
 
     @Override
     public ChannelFuture write(Object msg) {
+        // #write(Object msg) 方法，会调用 #write(Object msg, ChannelPromise promise) 方法
+        // 缺少的 promise 方法参数，通过调用 #newPromise() 方法，进行创建 Promise 对象，返回的结果就是传入的 promise 对象
         return write(msg, newPromise());
     }
 
@@ -771,17 +781,25 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         }
     }
 
+    /**
+     * TailContext 对 TailContext#flush() 方法的实现，是从 AbstractChannelHandlerContext 抽象类继承
+     */
     @Override
     public ChannelHandlerContext flush() {
+        // 获得下一个 Outbound 节点
         final AbstractChannelHandlerContext next = findContextOutbound();
         EventExecutor executor = next.executor();
+        // 在 EventLoop 的线程中
         if (executor.inEventLoop()) {
+            // 执行 flush 事件到下一个节点，随着 flush 事件不断的向下一个节点传播，最终会到达 HeadContext 节点。
             next.invokeFlush();
         } else {
+            // 不在 EventLoop 的线程中，创建 flush 任务
             Tasks tasks = next.invokeTasks;
             if (tasks == null) {
                 next.invokeTasks = tasks = new Tasks(next);
             }
+            // 提交到 EventLoop 的线程中，执行该任务。从而实现，在 EventLoop 的线程中，执行 flush 事件到下一个节点。
             safeExecute(executor, tasks.invokeFlushTask, channel().voidPromise(), null);
         }
 
@@ -812,7 +830,9 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
 
     private void invokeWriteAndFlush(Object msg, ChannelPromise promise) {
         if (invokeHandler()) {
+            // 执行 write 事件到下一个节点
             invokeWrite0(msg, promise);
+            // 执行 flush 事件到下一个节点
             invokeFlush0();
         } else {
             writeAndFlush(msg, promise);
@@ -820,34 +840,48 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
     }
 
     private void write(Object msg, boolean flush, ChannelPromise promise) {
+        // 若消息为空，抛出异常
         ObjectUtil.checkNotNull(msg, "msg");
         try {
+            // 判断是否为不合法的 Promise 对象
             if (isNotValidPromise(promise, true)) {
+                // 释放消息 (数据) 相关的资源
                 ReferenceCountUtil.release(msg);
                 // cancelled
                 return;
             }
         } catch (RuntimeException e) {
+            // 发生异常，释放消息 (数据) 相关的资源。最终，会抛出该异常
             ReferenceCountUtil.release(msg);
             throw e;
         }
 
+        // 写入消息 (数据) 到内存队列
+        // 获得下一个 Outbound 节点
         AbstractChannelHandlerContext next = findContextOutbound();
+        // 记录 Record 记录
         final Object m = pipeline.touch(msg, next);
         EventExecutor executor = next.executor();
+        // 在 EventLoop 的线程中
         if (executor.inEventLoop()) {
             if (flush) {
+                // 执行 writeAndFlush 事件到下一个节点
                 next.invokeWriteAndFlush(m, promise);
             } else {
+                // 执行 write 事件到下一个节点
                 next.invokeWrite(m, promise);
             }
         } else {
+            // 不在 EventLoop 的线程中
             final AbstractWriteTask task;
             if (flush) {
+                // 创建 writeAndFlush 任务。flush 为 true 时，该方法执行的是 write + flush 的组合操作，即将数据写到内存队列后，立即刷新内存队列，又将其中的数据写入到对端。
                 task = WriteAndFlushTask.newInstance(next, m, promise);
             }  else {
+                // 创建 write 任务
                 task = WriteTask.newInstance(next, m, promise);
             }
+            // 提交到 EventLoop 的线程中，执行该任务。从而实现，在 EventLoop 的线程中，执行 writeAndFlush 或 write 事件到下一个节点
             if (!safeExecute(executor, task, promise, m)) {
                 // We failed to submit the AbstractWriteTask. We need to cancel it so we decrement the pending bytes
                 // and put it back in the Recycler for re-use later.
@@ -916,6 +950,9 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         return false;
     }
 
+    /**
+     * 返回 DefaultChannelPromise 对象
+     */
     @Override
     public ChannelPromise newPromise() {
         return new DefaultChannelPromise(channel(), executor());
@@ -1129,19 +1166,52 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         return StringUtil.simpleClassName(ChannelHandlerContext.class) + '(' + name + ", " + channel() + ')';
     }
 
+    /**
+     * AbstractWriteTask，实现 Runnable 接口，写入任务抽象类。它有两个子类实现：WriteTask，write 任务实现类。WriteAndFlushTask，write + flush 任务实现类。它们都是 AbstractChannelHandlerContext 的内部静态类。
+     */
     abstract static class AbstractWriteTask implements Runnable {
 
+        /**
+         * 提交任务时，是否计算 AbstractWriteTask 对象的自身占用内存大小
+         */
         private static final boolean ESTIMATE_TASK_SIZE_ON_SUBMIT =
                 SystemPropertyUtil.getBoolean("io.netty.transport.estimateSizeOnSubmit", true);
 
+        /**
+         * 每个 AbstractWriteTask 对象自身占用内存的大小。为什么占用的 48 字节呢？
+         * - 16 bytes object header，对象头，16 字节。
+         * - 3 reference fields，3 个对象引用字段，3 * 8 = 24 字节。
+         * - 1 int fields，1 个 int 字段，4 字节。
+         * padding ，补齐 8 字节的整数倍，因此 4 字节。
+         * 因此，合计 48 字节 (64 位的 JVM 虚拟机，并且不考虑压缩)。
+         */
         // Assuming a 64-bit JVM, 16 bytes object header, 3 reference fields and one int field, plus alignment
         private static final int WRITE_TASK_OVERHEAD =
                 SystemPropertyUtil.getInt("io.netty.transport.writeTaskSizeOverhead", 48);
 
+        /**
+         * Recycler 处理器。而 Recycler 是 Netty 用来实现对象池的工具类。在网络通信中，写入是非常频繁的操作，因此通过 Recycler 重用 AbstractWriteTask 对象，减少对象的频繁创建，降低 GC 压力，提升性能。
+         */
         private final Recycler.Handle<AbstractWriteTask> handle;
+
+        /**
+         * pipeline 中的节点
+         */
         private AbstractChannelHandlerContext ctx;
+
+        /**
+         * 消息 (数据)
+         */
         private Object msg;
+
+        /**
+         * Promise 对象
+         */
         private ChannelPromise promise;
+
+        /**
+         * 对象大小
+         */
         private int size;
 
         @SuppressWarnings("unchecked")
@@ -1149,14 +1219,19 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
             this.handle = (Recycler.Handle<AbstractWriteTask>) handle;
         }
 
+        /**
+         * 初始化 AbstractWriteTask 对象，AbstractWriteTask 对象是从 Recycler 中获取，所以获取完成后，需要通过该方法，初始化该对象的属性。
+         */
         protected static void init(AbstractWriteTask task, AbstractChannelHandlerContext ctx,
                                    Object msg, ChannelPromise promise) {
             task.ctx = ctx;
             task.msg = msg;
             task.promise = promise;
 
+            // 计算 AbstractWriteTask 对象大小
             if (ESTIMATE_TASK_SIZE_ON_SUBMIT) {
                 task.size = ctx.pipeline.estimatorHandle().size(msg) + WRITE_TASK_OVERHEAD;
+                // 增加 ChannelOutboundBuffer 的 totalPendingSize 属性
                 ctx.pipeline.incrementPendingOutboundBytes(task.size);
             } else {
                 task.size = 0;
@@ -1166,9 +1241,12 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         @Override
         public final void run() {
             try {
+                // 减少 ChannelOutboundBuffer 的 totalPendingSize 属性
                 decrementPendingOutboundBytes();
+                // 执行 write 事件到下一个节点
                 write(ctx, msg, promise);
             } finally {
+                // 置空 AbstractWriteTask 对象，并调用 Recycler.Handle#recycle(this) 方法，回收该对象。
                 recycle();
             }
         }
@@ -1183,15 +1261,18 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
 
         private void decrementPendingOutboundBytes() {
             if (ESTIMATE_TASK_SIZE_ON_SUBMIT) {
+                // 减少 ChannelOutboundBuffer 的 totalPendingSize 属性
                 ctx.pipeline.decrementPendingOutboundBytes(size);
             }
         }
 
         private void recycle() {
             // Set to null so the GC can collect them directly
+            // 置空，help gc
             ctx = null;
             msg = null;
             promise = null;
+            // 回收对象
             handle.recycle(this);
         }
 
@@ -1200,18 +1281,29 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         }
     }
 
+    /**
+     * WriteTask，实现 SingleThreadEventLoop.NonWakeupRunnable 接口，继承 AbstractWriteTask 抽象类，write 任务实现类。
+     * 为什么会实现 SingleThreadEventLoop.NonWakeupRunnable 接口呢？write 操作，仅仅将数据写到内存队列中，无需唤醒 EventLoop，从而提升性能。
+     * WriteTask 无需实现 #write(AbstractChannelHandlerContext ctx, Object msg, ChannelPromise promise) 方法，直接重用父类该方法即可。
+     */
     static final class WriteTask extends AbstractWriteTask implements SingleThreadEventLoop.NonWakeupRunnable {
 
         private static final Recycler<WriteTask> RECYCLER = new Recycler<WriteTask>() {
             @Override
             protected WriteTask newObject(Handle<WriteTask> handle) {
+                // 创建 WriteTask 对象
                 return new WriteTask(handle);
             }
         };
 
+        /**
+         * 创建 WriteTask 对象
+         */
         static WriteTask newInstance(
                 AbstractChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
+            // 从 Recycler 的对象池中获得 WriteTask 对象
             WriteTask task = RECYCLER.get();
+            // 初始化 WriteTask 对象的属性
             init(task, ctx, msg, promise);
             return task;
         }
@@ -1221,18 +1313,27 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
         }
     }
 
+    /**
+     * WriteAndFlushTask，继承 WriteAndFlushTask 抽象类，write + flush 任务实现类。
+     */
     static final class WriteAndFlushTask extends AbstractWriteTask {
 
         private static final Recycler<WriteAndFlushTask> RECYCLER = new Recycler<WriteAndFlushTask>() {
             @Override
             protected WriteAndFlushTask newObject(Handle<WriteAndFlushTask> handle) {
+                // 创建 WriteAndFlushTask 对象
                 return new WriteAndFlushTask(handle);
             }
         };
 
+        /**
+         * 创建 WriteAndFlushTask 对象
+         */
         static WriteAndFlushTask newInstance(
                 AbstractChannelHandlerContext ctx, Object msg,  ChannelPromise promise) {
+            // 从 Recycler 的对象池中获得 WriteAndFlushTask 对象
             WriteAndFlushTask task = RECYCLER.get();
+            // 初始化 WriteAndFlushTask 对象的属性
             init(task, ctx, msg, promise);
             return task;
         }
@@ -1241,9 +1342,14 @@ abstract class AbstractChannelHandlerContext extends DefaultAttributeMap
             super(handle);
         }
 
+        /**
+         * #write(AbstractChannelHandlerContext ctx, Object msg, ChannelPromise promise) 方法，在父类的该方法的基础上，增加执行 flush 事件到下一个节点。
+         */
         @Override
         public void write(AbstractChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
+            // 执行 write 事件到下一个节点
             super.write(ctx, msg, promise);
+            // 执行 flush 事件到下一个节点
             ctx.invokeFlush();
         }
     }

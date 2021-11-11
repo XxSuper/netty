@@ -369,8 +369,10 @@ final class PooledDirectByteBuf extends PooledByteBuf<ByteBuffer> {
         index = idx(index);
         tmpBuf.clear().position(index).limit(index + length);
         try {
+            // 读取数据到临时的 Java NIO ByteBuffer 中。在对端未断开时，返回的是读取数据的字节数
             return in.read(tmpBuf);
         } catch (ClosedChannelException ignored) {
+            // 在对端已断开时，返回 -1 ，表示断开
             return -1;
         }
     }
